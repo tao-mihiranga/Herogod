@@ -132,12 +132,16 @@
                 <div class="model-picker">
                   <span class="model-dot"></span>
                   <select id="modelSelect" aria-label="AI provider and model">
-                    <optgroup label="Open models · your hardware">
-                      <option value="local:timbrooks/instruct-pix2pix">InstructPix2Pix</option>
+                    <optgroup label="Hugging Face models · Local / Colab">
+                      <option value="local:timbrooks/instruct-pix2pix">InstructPix2Pix · light</option>
                       <option value="local:stabilityai/stable-diffusion-xl-base-1.0">SDXL img2img</option>
+                      <option value="local:black-forest-labs/flux-3-image-klein">FLUX 3 Klein · gated</option>
+                      <option value="local:briaai/Fibo-2.0-edit-turbo">FIBO 2 Edit Turbo · gated</option>
+                      <option value="local:Qwen/Qwen-Image-Edit-2511">Qwen Image Edit 2511</option>
                     </optgroup>
-                    <optgroup label="Free-tier APIs · provider rules apply">
-                      <option value="huggingface:timbrooks/instruct-pix2pix">Hugging Face</option>
+                    <optgroup label="Hosted APIs · your quota, provider rules apply">
+                      <option value="huggingface:timbrooks/instruct-pix2pix">HF Inference · InstructPix2Pix</option>
+                      <option value="huggingface:briaai/Fibo-2.0-edit-turbo">HF Inference · FIBO 2 Turbo</option>
                       <option value="gemini:gemini-2.5-flash-image">Gemini Flash Image</option>
                     </optgroup>
                   </select>
@@ -147,8 +151,8 @@
               </div>
             </div>
             <div class="advanced-panel" id="advancedPanel" hidden>
-              <label class="range-control" id="stepsControl"><span>Steps <output id="stepsValue">20</output></span><input type="range" id="stepsInput" min="5" max="50" value="20"></label>
-              <label class="range-control" id="guidanceControl"><span>Prompt guidance <output id="guidanceValue">7.5</output></span><input type="range" id="guidanceInput" min="1" max="15" step="0.5" value="7.5"></label>
+              <label class="range-control" id="stepsControl"><span>Steps <output id="stepsValue">20</output></span><input type="range" id="stepsInput" min="1" max="50" value="20"></label>
+              <label class="range-control" id="guidanceControl"><span><span id="guidanceLabel">Prompt guidance</span> <output id="guidanceValue">7.5</output></span><input type="range" id="guidanceInput" min="1" max="15" step="0.5" value="7.5"></label>
               <label class="range-control" id="imageGuidanceControl"><span>Image adherence <output id="imageGuidanceValue">1.5</output></span><input type="range" id="imageGuidanceInput" min="0.5" max="3" step="0.1" value="1.5"></label>
               <label class="range-control" id="strengthControl" hidden><span>Change strength <output id="strengthValue">0.65</output></span><input type="range" id="strengthInput" min="0.1" max="1" step="0.05" value="0.65"></label>
               <label class="seed-control"><span>Seed</span><input type="number" id="seedInput" min="-1" max="2147483647" value="-1" title="-1 chooses a random seed"></label>
@@ -179,8 +183,14 @@
       <p class="field-help">This protects your public tunnel. It is not an AI provider key and is kept only in this browser tab.</p>
       <div class="connection-test-row"><button class="secondary-button" id="testConnectionButton"><svg><use href="#i-refresh"></use></svg>Test connection</button><span id="connectionTestResult" role="status"></span></div>
       <div class="settings-divider"></div>
-      <div class="settings-section-title">Provider credentials</div>
-      <p class="settings-copy">Hugging Face and Gemini keys belong in backend environment variables—not in this page. Local open models need no AI API key.</p>
+      <div class="settings-section-title">Hugging Face token</div>
+      <p class="settings-copy">Used for hosted HF inference and gated model downloads in Colab/local Diffusers. Accept each gated model’s conditions on its Hugging Face page first.</p>
+      <label class="field-label" for="hfTokenInput">Your HF token <span>This tab only</span></label>
+      <input class="text-input" id="hfTokenInput" type="password" placeholder="hf_…" autocomplete="off" spellcheck="false">
+      <p class="field-help">Stored in <code>sessionStorage</code>, never saved by Herogod on the server, and sent only to your configured backend. Use HTTPS and a backend you trust. For shared runtimes, prefer Colab Secrets or the backend’s <code>HF_TOKEN</code> environment variable.</p>
+      <div class="settings-divider"></div>
+      <div class="settings-section-title">Other provider credentials</div>
+      <p class="settings-copy">Gemini keys still belong in backend environment variables or Colab Secrets. Local open models need no AI API key unless their Hugging Face repository is gated.</p>
       <button class="text-link" id="settingsGuideLink">Read the free provider guide <svg><use href="#i-arrow"></use></svg></button>
     </div>
     <div class="modal-footer"><button class="secondary-button" data-close-dialog="settingsDialog">Cancel</button><button class="primary-button" id="saveSettingsButton">Save & connect</button></div>
@@ -201,16 +211,24 @@
       <section class="guide-panel active" data-guide-panel="free">
         <div class="guide-lead"><span>FREE TO START</span><h3>Open models first.<br>Cloud only when you want it.</h3><p>“Free” never means unlimited. Colab runtime and hosted API quotas can change; Herogod does not sell credits or add a markup.</p></div>
         <div class="provider-guide-list">
-          <article><div class="provider-guide-icon local"><svg><use href="#i-spark"></use></svg></div><div><div class="provider-title"><h4>Local open models</h4><span class="tag recommended">RECOMMENDED</span></div><p>Run InstructPix2Pix or SDXL on your GPU or a free Colab runtime. No AI API token, no per-image fee, and no extra cloud moderation layer.</p><div class="provider-meta"><span>No AI key</span><span>GPU recommended</span><span>Most control</span></div></div></article>
+          <article><div class="provider-guide-icon local"><svg><use href="#i-spark"></use></svg></div><div><div class="provider-title"><h4>Local open models</h4><span class="tag recommended">RECOMMENDED</span></div><p>Run Hugging Face models on your GPU or Colab. InstructPix2Pix and SDXL need no AI key; gated or very large models need a token and more memory.</p><div class="provider-meta"><span>No per-image model fee</span><span>GPU memory varies</span><span>Most control</span></div></div></article>
           <article><div class="provider-guide-icon hf">🤗</div><div><div class="provider-title"><h4>Hugging Face Inference</h4><span class="tag">FREE CREDITS</span></div><p>Uses your own Hugging Face token and available inference credits. Model support and quotas vary. Provider availability and policies still apply.</p><div class="provider-meta"><span>Account required</span><span>Limited monthly credits</span></div></div></article>
           <article><div class="provider-guide-icon gemini"><svg><use href="#i-spark"></use></svg></div><div><div class="provider-title"><h4>Gemini Flash Image</h4><span class="tag">FREE TIER</span></div><p>Connect your own Google AI Studio key. Free-tier eligibility and rate limits depend on the current model and your region. Google’s safety systems remain active.</p><div class="provider-meta"><span>API key required</span><span>Hosted provider</span></div></div></article>
         </div>
-        <div class="plain-note"><svg><use href="#i-info"></use></svg><p><strong>About “uncensored”:</strong> Herogod’s self-hosted pipeline adds no third-party filter or prompt transformation. It does not bypass hosted provider safeguards. Model licenses and applicable law still apply.</p></div>
+        <div class="model-guide-heading">COLAB MODEL CATALOG</div>
+        <div class="model-catalog-guide">
+          <div><strong>InstructPix2Pix</strong><span>20 steps · T4 friendly</span><small>Best lightweight default; no gated repository.</small></div>
+          <div><strong>SDXL img2img</strong><span>25 steps · T4 / offload</span><small>Creative restyling with change-strength control.</small></div>
+          <div><strong>FLUX 3 Image Klein</strong><span>16 steps · 24GB+ BF16</span><small>Gated. Full result captions required; optional official upsampler needs substantial extra memory.</small></div>
+          <div><strong>FIBO 2.0 Edit Turbo</strong><span>4 steps · high VRAM</span><small>Gated, non-commercial. Plain edit instructions work; VGL JSON is optional.</small></div>
+          <div><strong>Qwen Image Edit 2511</strong><span>40 steps · very high VRAM</span><small>High-fidelity editing with adjustable true CFG guidance.</small></div>
+        </div>
+        <div class="plain-note"><svg><use href="#i-info"></use></svg><p><strong>About “uncensored”:</strong> Herogod’s self-hosted pipeline adds no third-party filter or prompt transformation by default. The optional FLUX prompt upsampler is explicit. Hosted provider safeguards are never bypassed. Model licenses and applicable law still apply.</p></div>
       </section>
       <section class="guide-panel" data-guide-panel="colab" hidden>
         <div class="guide-lead compact"><span>NO LOCAL GPU NEEDED</span><h3>Launch on Google Colab</h3><p>The included notebook installs the backend, prepares an open model, and creates a temporary secure tunnel.</p></div>
         <ol class="setup-steps">
-          <li><span>1</span><div><strong>Open the notebook</strong><p>Open <code>Herogod_Colab.ipynb</code> in Google Colab. In the menu, choose <b>Runtime → Change runtime type → T4 GPU</b>. Free GPU availability is not guaranteed.</p></div></li>
+          <li><span>1</span><div><strong>Open the notebook</strong><p>Open <code>Herogod_Colab.ipynb</code> in Google Colab. Choose <b>Runtime → Change runtime type → T4 GPU</b> for lightweight models. FLUX 3, FIBO 2, and Qwen need substantially more GPU/RAM; free T4 is not sufficient for every option.</p></div></li>
           <li><span>2</span><div><strong>Run the cells in order</strong><p>Keep the default InstructPix2Pix model for the easiest T4 setup. The first model download can take several minutes.</p></div></li>
           <li><span>3</span><div><strong>Copy both connection values</strong><p>The launcher prints a <code>https://…trycloudflare.com</code> URL and a random Herogod access token. The tunnel is temporary and public, so keep the token private.</p></div></li>
           <li><span>4</span><div><strong>Connect this interface</strong><p>Paste both values into Connection settings, test the connection, then save. You can use this opened HTML file or a hosted copy.</p></div></li>
@@ -220,7 +238,7 @@
       </section>
       <section class="guide-panel" data-guide-panel="api" hidden>
         <div class="guide-lead compact"><span>BRING YOUR OWN KEY</span><h3>Free-tier API setup</h3><p>Only use keys you create yourself. Put them in the backend environment or Colab Secrets, never in source code or chat messages.</p></div>
-        <div class="api-guide-card"><div class="api-guide-heading"><span class="provider-guide-icon hf">🤗</span><div><h4>Hugging Face</h4><p>For available image-to-image inference models</p></div></div><ol><li>Create a free Hugging Face account.</li><li>Open Settings → Access Tokens and create a token with Inference Providers permission.</li><li>Set <code>HF_TOKEN</code> on the backend. In Colab, a secret named <code>HF_TOKEN</code> is read automatically.</li><li>Select <b>Hugging Face</b> in the composer. If a model is not deployed for serverless inference, run it locally instead.</li></ol></div>
+        <div class="api-guide-card"><div class="api-guide-heading"><span class="provider-guide-icon hf">🤗</span><div><h4>Hugging Face</h4><p>For hosted inference and gated Colab model downloads</p></div></div><ol><li>Create a free Hugging Face account and your own access token. Use read access for local downloads; hosted inference also needs Inference Providers permission.</li><li>For FLUX 3 or FIBO 2, open the model page and accept its license conditions while logged in.</li><li>Paste the token in <b>Connection settings → Your HF token</b> for this tab, or set <code>HF_TOKEN</code> through Colab Secrets/backend environment for a shared runtime.</li><li>Select a <b>Local / Colab</b> model to download weights, or an <b>HF Inference</b> option to use available hosted credits. Provider deployment and quotas vary.</li></ol></div>
         <div class="api-guide-card"><div class="api-guide-heading"><span class="provider-guide-icon gemini"><svg><use href="#i-spark"></use></svg></span><div><h4>Google AI Studio</h4><p>For Gemini image understanding and editing</p></div></div><ol><li>Open Google AI Studio and create an API key in an eligible region.</li><li>Confirm that your chosen image model currently offers a free tier and review its limits.</li><li>Set <code>GEMINI_API_KEY</code> on the backend. Optionally override <code>GEMINI_MODEL</code>.</li><li>Select <b>Gemini Flash Image</b> in the composer. Provider safety filters are not bypassed.</li></ol></div>
         <div class="plain-note warning"><svg><use href="#i-info"></use></svg><p>Herogod has no built-in paid provider and does not include shared keys. “Free tier” refers to the provider’s own current offering; always check its official pricing page.</p></div>
       </section>

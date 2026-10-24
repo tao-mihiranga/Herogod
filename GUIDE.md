@@ -12,21 +12,30 @@ Herogod does not include shared API keys or promise unlimited generation. Check 
 
 ### A. Completely self-hosted inference — recommended
 
-**Models included:** InstructPix2Pix, SDXL img2img, and optional INSwapper.
+**Models included:** InstructPix2Pix, SDXL img2img, FLUX 3 Image Klein, FIBO 2.0 Edit Turbo, Qwen Image Edit 2511, and optional INSwapper.
 
-- **AI token:** none.
-- **API cost:** none.
-- **Compute:** your machine or a free Colab runtime, subject to availability.
-- **Moderation:** Herogod adds no cloud moderation layer or hidden prompt rewrite. It also does not remove or bypass a hosted provider's safety controls.
+- **AI token:** not required for ungated repositories. FLUX 3 and FIBO 2 require your HF token and prior acceptance of their model-page conditions.
+- **API cost:** none for local inference. Compute, storage, and bandwidth are still your responsibility.
+- **Compute:** your machine or Colab. A free T4 is a good default for InstructPix2Pix, not a guarantee for every registered checkpoint.
+- **Moderation:** Herogod adds no cloud moderation layer or hidden prompt rewrite. The FLUX prompt upsampler is optional and explicit. Hosted-provider safety controls are not bypassed.
 - **Best default:** `timbrooks/instruct-pix2pix` on a T4 GPU.
-- **License:** review each current model card before use. “Open” and “free to download” do not automatically mean unrestricted commercial use.
+- **License:** review each current model card. “Open weights” does not mean unrestricted commercial use; FIBO 2 is non-commercial and FLUX 3 has its own Kommunity License.
 
-Model links:
+| Model and official card | Herogod defaults | Token | Runtime guidance |
+|---|---|---|---|
+| [InstructPix2Pix](https://huggingface.co/timbrooks/instruct-pix2pix) | 20 steps, guidance 7.5, image adherence 1.5 | No | Lightweight default; T4 recommended |
+| [SDXL 1.0](https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0) | 25 steps, guidance 7.5, strength 0.65 | No | T4 with conservative settings/offload |
+| [FLUX 3 Image Klein](https://huggingface.co/black-forest-labs/flux-3-image-klein) | 16 steps, no CFG | **Yes, gated** | 24GB+ GPU for BF16; official upsampler needs substantial extra memory |
+| [FIBO 2.0 Edit Turbo](https://huggingface.co/briaai/Fibo-2.0-edit-turbo) | 4 steps, guidance 1.0 | **Yes, gated** | High-memory CUDA GPU; standard-pipeline CPU offload supported; CC BY-NC 4.0 |
+| [Qwen Image Edit 2511](https://huggingface.co/Qwen/Qwen-Image-Edit-2511) | 40 steps, true CFG 4.0 | No | Very high-memory CUDA GPU; offload requires sufficient system RAM; Apache 2.0 |
 
-- [InstructPix2Pix model card](https://huggingface.co/timbrooks/instruct-pix2pix)
-- [SDXL 1.0 base model card](https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0)
-- [InsightFace repository and licensing](https://github.com/deepinsight/insightface)
-- [Diffusers documentation](https://huggingface.co/docs/diffusers/index)
+Additional references:
+
+- [FLUX 3 prompt upsampler](https://huggingface.co/black-forest-labs/flux-3-image-klein-pup) — optional in Herogod; required only when you do not provide a full resulting-scene caption.
+- [Diffusers documentation](https://huggingface.co/docs/diffusers/index) — version 0.42+ includes the FLUX 3 and FIBO 2 pipeline classes used here.
+- [InsightFace repository and licensing](https://github.com/deepinsight/insightface) for optional face swap.
+
+Herogod currently enables hosted HF Inference for InstructPix2Pix and FIBO 2 Turbo when a provider is available. At implementation time, the FIBO 2 card listed WaveSpeed; the FLUX 3 card listed no Inference Provider deployment. The Qwen card listed a provider, but Herogod keeps Qwen local-only because its dedicated Plus/true-CFG parameter mapping has not been validated through that hosted route. Check each current card before relying on availability or free credits.
 
 ### B. Hugging Face Inference Providers
 
@@ -44,11 +53,12 @@ Official resources:
 
 Setup:
 
-1. Create/sign in to a free Hugging Face account.
-2. Create your own token with Inference Providers permission. Use the least permission needed.
-3. Set `HF_TOKEN` in the backend environment or Colab Secrets. Do not put it in HTML, JavaScript, Git, or a chat prompt.
-4. Start Herogod and select **Hugging Face** in the model picker.
-5. If inference says the model is not deployed or supported, use local InstructPix2Pix instead. Herogod reports this rather than silently substituting a paid service.
+1. Create/sign in to a Hugging Face account.
+2. Create your own token. Read access is enough for gated local downloads; hosted inference also needs Inference Providers permission. Use the least permission needed.
+3. For FLUX 3 or FIBO 2, open the exact model page while logged in and accept its conditions before trying to download.
+4. Either set `HF_TOKEN` in the backend environment/Colab Secrets, or paste it into **Connection settings → Your HF token**. The UI option is kept in tab-only `sessionStorage` and sent only to your configured backend through `X-HF-Token`. Use HTTPS and a backend you trust.
+5. Never embed a token in HTML/JavaScript source, Git, screenshots, or a chat prompt. Prefer Colab Secrets on shared runtimes.
+6. Select an **HF Inference** option for hosted credits, or a **Local / Colab** option for weight downloads. If hosted inference is unavailable, Herogod reports it rather than silently substituting another paid service.
 
 ### C. Google AI Studio / Gemini
 
@@ -75,15 +85,16 @@ Setup:
 ## 2. Colab: detailed walkthrough
 
 1. Open [`Herogod_Colab.ipynb`](Herogod_Colab.ipynb) in Colab.
-2. Choose **Runtime → Change runtime type → T4 GPU**. If no free GPU is available, wait or run locally; CPU diffusion is much slower.
-3. In **Runtime choices**, keep:
+2. Choose **Runtime → Change runtime type → T4 GPU** for lightweight models. If no free GPU is available, wait or run locally. FLUX 3, FIBO 2, and Qwen need substantially more memory and are not all practical on a free T4.
+3. In **Runtime choices**, start with:
    - `MODEL_ID = timbrooks/instruct-pix2pix`
-   - `MAX_IMAGE_SIZE = 768`
+   - `MAX_IMAGE_SIZE = 0` to use each model's recommended size automatically.
+   - `ENABLE_FLUX_UPSAMPLING = False` unless you selected FLUX 3 on a runtime with enough extra GPU/RAM for the official upsampler.
    - `ENABLE_FACE_SWAP = False` unless you need it and have reviewed its license.
-4. For hosted APIs, add `HF_TOKEN` or `GEMINI_API_KEY` under Colab's key/Secrets icon and enable notebook access. Never paste keys into a code cell.
+4. For hosted APIs or gated models, add `HF_TOKEN` or `GEMINI_API_KEY` under Colab's Secrets icon and enable notebook access. Never paste keys into a code cell. You can instead paste only the HF token into the UI's Connection settings for the current browser tab.
 5. Run cells from top to bottom. Installation and the first model download can take time.
 6. Copy the printed studio URL and Herogod access token. The token protects the tunnel; it is not an AI key.
-7. Open the studio URL, go to **Connection settings**, and paste the token. Click **Test connection**, then **Save & connect**.
+7. Open the studio URL, go to **Connection settings**, and paste the Herogod access token. Add your HF token too if you are using gated models or HF Inference and did not configure it through Colab Secrets. Click **Test connection**, then **Save & connect**.
 8. Alternatively, double-click the repository's `index.html`; paste both the tunnel backend URL and token there.
 9. Upload a PNG/JPG/WebP (up to 15 MB), describe a specific edit, and send.
 
@@ -107,7 +118,7 @@ python server.py --host 127.0.0.1
 
 ### Local open models
 
-Install a PyTorch build matching your CUDA/CPU environment, then:
+Use Python 3.11+ and install a PyTorch build matching your CUDA/CPU environment, then:
 
 ```bash
 pip install -r requirements.txt -r requirements-local.txt
@@ -120,7 +131,7 @@ The first run downloads model weights from the model hub. Later runs can use the
 
 The frontend is static. Host `index.html`, `styles.css`, `app.js`, and `favicon.svg` on any static host, then point Settings at an HTTPS Herogod backend. Alternatively, `python server.py` serves both frontend and API from one origin.
 
-For an HTTPS-hosted page, use an HTTPS backend tunnel to avoid mixed-content restrictions. Do not expose provider keys in static hosting environment variables intended for browser code; this project only reads them in Python.
+For an HTTPS-hosted page, use an HTTPS backend tunnel to avoid mixed-content restrictions. Never embed provider keys in static source or public hosting environment variables intended for browser code. The optional HF token field keeps the value only in the current tab and forwards it to your backend; Gemini remains backend-only.
 
 ## 4. Prompting guide
 
@@ -138,6 +149,18 @@ Change the background to a rainy Tokyo alley at night, with soft neon reflection
 Turn this photograph into hand-painted gouache concept art. Preserve the composition and main shapes; use muted teal and warm ochre colors.
 ```
 
+### FLUX 3 full resulting-scene captions
+
+With prompt upsampling off, do not send a short instruction such as “make it blue.” Describe the complete image you want returned, including the preserved subject and setting:
+
+```text
+A detailed photorealistic portrait of the same person in the same coastal viewpoint and framing, now at blue hour. Preserve their identity, pose, clothing, and natural skin texture. Replace the sunny sky with a deep indigo twilight sky, add soft cool moonlight from the left, retain gentle ocean detail in the background, and use a calm cinematic color grade with realistic shadows.
+```
+
+You can enable `HEROGOD_FLUX_UPSAMPLING=1` to run the official vision-language upsampler and use shorter instructions instead. It is a separate large model and needs substantial additional GPU/RAM. Herogod shows when this explicit option is active.
+
+FIBO 2 Turbo accepts a direct instruction such as “replace the jacket with a red leather one.” Advanced users can instead provide compatible VGL JSON with an `edit_instruction`; Herogod does not require a separate Gemini/VGL key for direct edits.
+
 ### Product cleanup
 
 ```text
@@ -153,8 +176,9 @@ Place this product on a clean warm-gray studio surface. Add a soft shadow and ev
 
 ### Useful controls
 
-- **Steps:** more is not always better. Start at 20; increase only if details need work.
-- **Prompt guidance:** higher values follow the text more strongly but can reduce naturalness.
+- **Steps:** keep each model's default: 20 for InstructPix2Pix, 25 for SDXL, 16 for FLUX 3, 4 for FIBO 2 Turbo, and 40 for Qwen. More is not always better, especially for turbo models.
+- **Prompt guidance:** start at 7.5 for InstructPix2Pix/SDXL. FLUX 3 and FIBO 2 do not use standard CFG in this integration, so Herogod hides the irrelevant controls.
+- **True CFG (Qwen):** defaults to 4.0; use Qwen's Advanced settings to adjust it rather than standard prompt guidance.
 - **Image adherence (InstructPix2Pix):** higher values retain more of the source. Start at 1.5.
 - **Change strength (SDXL):** lower values stay closer to the input; higher values allow bigger changes. Start around 0.65.
 - **Seed:** `-1` selects a random seed. Reuse a reported seed when you want comparable variations.
@@ -184,7 +208,7 @@ Use clear, front-facing, well-lit faces. No detection or poor alignment can redu
 - Test `http://127.0.0.1:8000/api/health` locally (with your Herogod token if configured).
 - For Colab, check whether the `trycloudflare.com` URL changed.
 - An HTTPS frontend generally needs an HTTPS backend.
-- Check the access token; a 401/403 means authentication failed, not that the model is missing.
+- Check the Herogod access token; a 401 means authentication failed. For gated HF models, a 403 can instead mean you have not accepted the model conditions or your HF token lacks access.
 
 ### Local model is downloading or slow
 
@@ -193,14 +217,17 @@ The first request loads weights and initializes the pipeline. Watch the terminal
 ### CUDA out of memory
 
 - Restart the runtime to clear other model allocations.
-- Use InstructPix2Pix instead of SDXL.
-- Lower `HEROGOD_MAX_IMAGE_SIZE` to `512` or `640`.
-- Set `HEROGOD_CPU_OFFLOAD=1`.
-- Keep steps moderate and concurrency at one.
+- Use InstructPix2Pix instead of a larger checkpoint. Offload and resizing do not make every 9B/20B model fit a free T4.
+- Lower `HEROGOD_MAX_IMAGE_SIZE` to `512` or `640` for models that support smaller inputs.
+- Set `HEROGOD_CPU_OFFLOAD=1` for SDXL, FIBO 2, or Qwen and ensure sufficient system RAM. The FLUX 3 modular pipeline does not expose standard CPU-offload methods in this integration.
+- Disable `HEROGOD_FLUX_UPSAMPLING` and provide a full caption instead; the PUP is a separate large model.
+- Keep steps at model defaults and concurrency at one.
 
 ### Hugging Face model unavailable
 
-Serverless inference support is independent of model download availability. Check the model's inference widget/provider support, token permission, and remaining credits. Local Diffusers is the reliable fallback included for this case.
+Serverless inference support is independent of model download availability. Check the model's inference widget/provider support, token permission, and remaining credits. Local Diffusers is the fallback included for supported hosted options.
+
+For a local gated-model 401/403, confirm that `HF_TOKEN` or the UI's HF token belongs to the same account that accepted the model conditions. Herogod only tests whether a token is present during health checks; the Hub validates it during the actual download.
 
 ### Gemini returned no image
 
