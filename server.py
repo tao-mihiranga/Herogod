@@ -49,7 +49,7 @@ app.add_middleware(
     allow_origins=["*"],
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Herogod-Token"],
+    allow_headers=["Authorization", "Content-Type", "X-Herogod-Token", "X-HF-Token"],
     max_age=86400,
 )
 try:
@@ -111,10 +111,19 @@ def module_installed(name: str) -> bool:
         return False
 
 
+def supplied_hf_token(request: Request) -> str | None:
+    token = request.headers.get("x-hf-token", "").strip()
+    if len(token) > 512:
+        raise HTTPException(status_code=400, detail="The HF token header is too long.")
+    return token or None
+
+
 @app.get("/api/health", dependencies=[Depends(authorize)])
-async def health() -> dict[str, Any]:
+async def health(request: Request) -> dict[str, Any]:
+    hf_token = supplied_hf_token(request)
+    environment_hf_token = os.getenv("HF_TOKEN", "").strip()
     local_ready = module_installed("torch") and module_installed("diffusers")
-    huggingface_ready = bool(os.getenv("HF_TOKEN")) and module_installed("huggingface_hub")
+    huggingface_ready = bool(hf_token or environment_hf_token) and module_installed("huggingface_hub")
     gemini_ready = bool(os.getenv("GEMINI_API_KEY")) and module_installed("google.genai")
     return {
         "app": "Herogod",
@@ -151,6 +160,7 @@ async def health() -> dict[str, Any]:
             "face_swap": face_swap_configured() and module_installed("insightface"),
             "server_side_history": False,
         },
+        "models": providers.model_catalog(token_available=bool(hf_token or environment_hf_token)),
         "runtime": {"local_model_status": providers.LOCAL_MANAGER.status},
     }
 
@@ -199,12 +209,13 @@ def encode_image(image: Image.Image) -> str:
 
 @app.post("/api/edit", dependencies=[Depends(authorize)])
 async def edit_image(
+    request: Request,
     image: UploadFile = File(...),
     prompt: str = Form(..., min_length=1, max_length=2000),
     provider: str = Form("local"),
     model: str = Form(providers.INSTRUCT_PIX2PIX, max_length=200),
-    steps: int = Form(20, ge=5, le=50),
-    guidance: float = Form(7.5, ge=1, le=15),
+    steps: int = Form(0, ge=0, le=50),
+    guidance: float = Form(0, ge=0, le=15),
     image_guidance: float = Form(1.5, ge=0.5, le=3),
     strength: float = Form(0.65, ge=0.1, le=1),
     seed: int = Form(-1, ge=-1, le=2_147_483_647),
@@ -215,6 +226,7 @@ async def edit_image(
     if provider not in {"local", "huggingface", "gemini"}:
         raise HTTPException(status_code=400, detail="Unknown provider. Choose local, huggingface, or gemini.")
     source = await read_image(image)
+    hf_token = supplied_hf_token(request)
     started = time.perf_counter()
     async with INFERENCE_LIMITER:
         if provider == "local":
@@ -228,6 +240,7 @@ async def edit_image(
                 image_guidance=image_guidance,
                 strength=strength,
                 seed=seed,
+                hf_token=hf_token,
             )
         elif provider == "huggingface":
             result = await asyncio.to_thread(
@@ -237,6 +250,7 @@ async def edit_image(
                 model_id=model,
                 steps=steps,
                 guidance=guidance,
+                hf_token=hf_token,
             )
         else:
             result = await asyncio.to_thread(providers.gemini_edit, image=source, prompt=prompt, model_id=model)

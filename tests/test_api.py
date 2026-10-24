@@ -51,6 +51,18 @@ def test_access_token_is_enforced(client: TestClient, monkeypatch: pytest.Monkey
     assert response.status_code == 200
 
 
+def test_hf_token_enables_provider_metadata_without_being_returned(client: TestClient):
+    response = client.get("/api/health", headers={"X-HF-Token": "test-hf-token"})
+    assert response.status_code == 200
+    payload = response.json()
+    hf = next(provider for provider in payload["providers"] if provider["id"] == "huggingface")
+    assert hf["configured"] is True
+    flux = next(model for model in payload["models"] if model["id"] == "black-forest-labs/flux-3-image-klein")
+    assert flux["requires_hf_token"] is True
+    assert flux["token_available"] is True
+    assert "test-hf-token" not in response.text
+
+
 def test_rejects_unsupported_upload_and_blank_prompt(client: TestClient):
     unsupported = client.post(
         "/api/edit",
@@ -97,6 +109,7 @@ def test_local_edit_returns_png_data_url(client: TestClient, monkeypatch: pytest
             "strength": "0.65",
             "seed": "-1",
         },
+        headers={"X-HF-Token": "test-hf-token"},
     )
     assert response.status_code == 200, response.text
     payload = response.json()
@@ -105,6 +118,8 @@ def test_local_edit_returns_png_data_url(client: TestClient, monkeypatch: pytest
     assert payload["elapsed_ms"] >= 0
     assert captured["prompt"] == "make the background blue"
     assert captured["image"].size == (64, 48)
+    assert captured["hf_token"] == "test-hf-token"
+    assert "test-hf-token" not in response.text
     prefix, encoded = payload["image"].split(",", 1)
     assert prefix == "data:image/png;base64"
     result = Image.open(io.BytesIO(base64.b64decode(encoded)))

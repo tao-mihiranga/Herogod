@@ -8,6 +8,7 @@
   const MAX_SESSIONS = 20;
   const SETTINGS_KEY = "herogod.settings.v1";
   const TOKEN_KEY = "herogod.access-token.v1";
+  const HF_TOKEN_KEY = "herogod.hf-token.v1";
 
   const PROVIDERS = {
     local: { name: "Local / Colab", short: "Local", description: "Open model on your runtime" },
@@ -15,9 +16,30 @@
     gemini: { name: "Gemini", short: "Gemini", description: "Your Google AI Studio key" }
   };
 
+  const MODEL_CONFIG = {
+    "timbrooks/instruct-pix2pix": {
+      name: "InstructPix2Pix", kind: "instruct", steps: 20, guidance: 7.5,
+      note: "Lightweight instruction editing · no AI key needed."
+    },
+    "stabilityai/stable-diffusion-xl-base-1.0": {
+      name: "SDXL img2img", kind: "auto_img2img", steps: 25, guidance: 7.5,
+      note: "Creative restyling · adjust change strength for larger edits."
+    },
+    "black-forest-labs/flux-3-image-klein": {
+      name: "FLUX 3 Image Klein", kind: "flux3", steps: 16, guidance: 1, gated: true,
+      note: "Full result caption required · 24GB+ BF16 · gated HF repository."
+    },
+    "briaai/Fibo-2.0-edit-turbo": {
+      name: "FIBO 2.0 Edit Turbo", kind: "fibo2", steps: 4, guidance: 1, gated: true,
+      note: "Four-step editing · high VRAM · gated non-commercial weights."
+    },
+    "Qwen/Qwen-Image-Edit-2511": {
+      name: "Qwen Image Edit 2511", kind: "qwen_edit", steps: 40, guidance: 4,
+      note: "High-fidelity editing · true CFG guidance · very high VRAM."
+    }
+  };
   const MODEL_NAMES = {
-    "timbrooks/instruct-pix2pix": "InstructPix2Pix",
-    "stabilityai/stable-diffusion-xl-base-1.0": "SDXL img2img",
+    ...Object.fromEntries(Object.entries(MODEL_CONFIG).map(([id, config]) => [id, config.name])),
     "gemini-2.5-flash-image": "Gemini Flash Image"
   };
 
@@ -33,6 +55,7 @@
   const state = {
     settings: loadSettings(),
     accessToken: loadAccessToken(),
+    hfToken: loadHfToken(),
     sessions: [],
     activeSession: null,
     mode: "edit",
@@ -65,6 +88,10 @@
     try { return sessionStorage.getItem(TOKEN_KEY) || ""; } catch { return ""; }
   }
 
+  function loadHfToken() {
+    try { return sessionStorage.getItem(HF_TOKEN_KEY) || ""; } catch { return ""; }
+  }
+
   function saveSettings() {
     try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(state.settings)); } catch { /* Settings are non-critical. */ }
   }
@@ -73,6 +100,13 @@
     try {
       if (state.accessToken) sessionStorage.setItem(TOKEN_KEY, state.accessToken);
       else sessionStorage.removeItem(TOKEN_KEY);
+    } catch { /* The token can still be used for this page lifetime. */ }
+  }
+
+  function saveHfToken() {
+    try {
+      if (state.hfToken) sessionStorage.setItem(HF_TOKEN_KEY, state.hfToken);
+      else sessionStorage.removeItem(HF_TOKEN_KEY);
     } catch { /* The token can still be used for this page lifetime. */ }
   }
 
@@ -98,8 +132,31 @@
     return parsed.href.replace(/\/$/, "");
   }
 
-  function authHeaders(token = state.accessToken) {
-    return token ? { "Authorization": `Bearer ${token}`, "X-Herogod-Token": token } : {};
+  function authHeaders(token = state.accessToken, hfToken = "") {
+    const headers = {};
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+      headers["X-Herogod-Token"] = token;
+    }
+    if (hfToken) headers["X-HF-Token"] = hfToken;
+    return headers;
+  }
+
+  function modelConfig(modelId = state.settings.model) {
+    return MODEL_CONFIG[modelId] || MODEL_CONFIG["timbrooks/instruct-pix2pix"];
+  }
+
+  function backendModelConfig(modelId = state.settings.model) {
+    return state.backend.data?.models?.find(model => model.id === modelId);
+  }
+
+  function applyModelDefaults(modelId) {
+    const config = modelConfig(modelId);
+    state.settings.advanced.steps = config.steps;
+    state.settings.advanced.guidance = config.guidance;
+    state.settings.advanced.imageGuidance = 1.5;
+    state.settings.advanced.strength = 0.65;
+    applyAdvancedSettings();
   }
 
   function createSession() {
@@ -409,8 +466,13 @@
       button.setAttribute("aria-pressed", String(active));
     });
     const faceMode = state.mode === "face";
+    const fluxCaptionMode = !faceMode && state.settings.provider === "local" && modelConfig().kind === "flux3";
     $("#consentRow").hidden = !faceMode;
-    $("#promptInput").placeholder = faceMode ? "Add an optional note about this face swap…" : "Describe what you want to change…";
+    $("#promptInput").placeholder = faceMode
+      ? "Add an optional note about this face swap…"
+      : fluxCaptionMode
+        ? "Describe the complete resulting scene—subject, setting, composition, lighting, and style…"
+        : "Describe what you want to change…";
     $("#modelSelect").disabled = faceMode;
     $("#advancedToggle").disabled = faceMode || state.settings.provider === "gemini";
     if (faceMode) {
@@ -433,26 +495,37 @@
       $("#advancedToggle").classList.remove("active");
       return;
     }
-    const isSDXL = model === "stabilityai/stable-diffusion-xl-base-1.0";
+    const kind = modelConfig(model).kind;
     const isLocal = provider === "local";
-    $("#strengthControl").hidden = !isSDXL;
-    $("#imageGuidanceControl").hidden = !isLocal || isSDXL;
+    $("#strengthControl").hidden = kind !== "auto_img2img";
+    $("#imageGuidanceControl").hidden = !isLocal || kind !== "instruct";
     $("#stepsControl").hidden = false;
-    $("#guidanceControl").hidden = false;
+    $("#guidanceLabel").textContent = kind === "qwen_edit" ? "True CFG" : "Prompt guidance";
+    $("#guidanceControl").hidden = kind === "flux3" || kind === "fibo2";
   }
 
   function updateComposerNote() {
     const provider = state.settings.provider;
+    const config = modelConfig();
+    const backendModel = backendModelConfig();
     const providerStatus = state.backend.data?.providers?.find(item => item.id === provider);
-    let text = "Herogod can make mistakes. Review images before sharing.";
+    let text = config.note || "Herogod can make mistakes. Review images before sharing.";
     if (state.backend.status !== "online") text = "Connect a local or Colab backend to create.";
     else if (providerStatus && !providerStatus.configured) {
       text = provider === "local"
         ? "Local Diffusers dependencies are not installed on this backend."
-        : `Add ${provider === "gemini" ? "GEMINI_API_KEY" : "HF_TOKEN"} to your backend before creating.`;
+        : provider === "huggingface"
+          ? "Add your HF token in Connection settings or configure HF_TOKEN on the backend."
+          : "Add GEMINI_API_KEY to your backend before creating.";
+    } else if (provider === "local" && backendModel?.requires_hf_token && !backendModel.token_available) {
+      text = "Gated model: accept its Hugging Face conditions, then add your HF token in Connection settings.";
+    } else if (provider === "local" && config.kind === "flux3" && backendModel?.prompt_upsampling) {
+      text = "Official FLUX prompt upsampler enabled · expect substantial additional memory and latency.";
+    } else if (provider === "local" && backendModel) {
+      text = `${backendModel.prompt_note} ${backendModel.hardware}`;
+    } else if (provider !== "local") {
+      text = `${PROVIDERS[provider].name} uses your own quota. Provider availability and rules apply.`;
     }
-    else if (provider === "local") text = "Self-hosted open model · no AI API key or per-image fee.";
-    else text = `${PROVIDERS[provider].name} uses your own free-tier quota. Provider rules apply.`;
     $("#composerNote").innerHTML = `${escapeHtml(text)} <button id="setupLink">Setup guide</button>`;
   }
 
@@ -568,7 +641,9 @@
     scrollToBottom();
     persistActiveSession();
 
-    const timeout = setTimeout(() => state.abortController?.abort("timeout"), 5 * 60 * 1000);
+    const largeLocalModel = request.mode === "edit" && request.provider === "local" && ["flux3", "fibo2", "qwen_edit"].includes(modelConfig(request.model).kind);
+    const timeoutMinutes = largeLocalModel ? 20 : 5;
+    const timeout = setTimeout(() => state.abortController?.abort("timeout"), timeoutMinutes * 60 * 1000);
     try {
       const body = new FormData();
       body.append("image", dataUrlToBlob(request.image.dataUrl), request.image.name || "source.png");
@@ -587,8 +662,9 @@
         body.append("strength", String(request.advanced.strength));
         body.append("seed", String(request.advanced.seed));
       }
+      const requestHeaders = request.mode === "face" ? authHeaders() : authHeaders(state.accessToken, state.hfToken);
       const response = await fetch(`${normalizeBackendUrl(state.settings.backendUrl)}${endpoint}`, {
-        method: "POST", headers: authHeaders(), body, signal: state.abortController.signal
+        method: "POST", headers: requestHeaders, body, signal: state.abortController.signal
       });
       const result = await parseApiResponse(response);
       if (!result.image || !/^data:image\/(png|jpeg|webp);base64,/i.test(result.image)) throw new Error("The backend returned an invalid image response.");
@@ -608,7 +684,7 @@
       const reason = state.abortController?.signal.reason;
       assistantMessage.status = "error";
       if (reason === "user") assistantMessage.error = "Generation stopped. Your source image is still attached, so you can try again.";
-      else if (reason === "timeout") assistantMessage.error = "The request took longer than 5 minutes. A first model download can be slow—check the backend logs, then try again.";
+      else if (reason === "timeout") assistantMessage.error = `The request took longer than ${timeoutMinutes} minutes. A first model download can be slow—check the backend logs, then try again.`;
       else assistantMessage.error = friendlyError(error);
       if (!$("#promptInput").value && request.mode === "edit") {
         $("#promptInput").value = request.prompt;
@@ -633,7 +709,7 @@
       const detail = payload?.detail;
       let message = typeof detail === "string" ? detail : payload?.error || `Request failed with HTTP ${response.status}.`;
       if (Array.isArray(detail)) message = detail.map(item => item.msg || JSON.stringify(item)).join("; ");
-      if (response.status === 401 || response.status === 403) message = "The backend rejected the access token. Check Connection settings.";
+      if (response.status === 401) message = "The backend rejected the access token. Check Connection settings.";
       throw new Error(message);
     }
     return payload;
@@ -646,13 +722,13 @@
     return error.message || "An unexpected error interrupted the request.";
   }
 
-  async function checkBackend(url = state.settings.backendUrl, token = state.accessToken, updateGlobal = true) {
+  async function checkBackend(url = state.settings.backendUrl, token = state.accessToken, updateGlobal = true, hfToken = state.hfToken) {
     if (updateGlobal) setConnectionStatus("checking");
     try {
       const normalized = normalizeBackendUrl(url);
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 12000);
-      const response = await fetch(`${normalized}/api/health`, { headers: authHeaders(token), signal: controller.signal, cache: "no-store" });
+      const response = await fetch(`${normalized}/api/health`, { headers: authHeaders(token, hfToken), signal: controller.signal, cache: "no-store" });
       clearTimeout(timer);
       if (!response.ok) throw new Error(response.status === 401 || response.status === 403 ? "Access token rejected" : `HTTP ${response.status}`);
       const data = await response.json();
@@ -683,8 +759,9 @@
     if ($$("#modelSelect option").some(option => option.value === value)) {
       state.settings.model = defaultModel;
       $("#modelSelect").value = value;
+      applyModelDefaults(defaultModel);
       saveSettings();
-      updateAdvancedVisibility();
+      updateModeUI();
     }
   }
 
@@ -699,6 +776,7 @@
     closeSidebar();
     $("#backendUrlInput").value = state.settings.backendUrl;
     $("#accessTokenInput").value = state.accessToken;
+    $("#hfTokenInput").value = state.hfToken;
     $("#connectionTestResult").textContent = "";
     $("#connectionTestResult").className = "";
     openDialog($("#settingsDialog"));
@@ -827,13 +905,15 @@
     $("#modelSelect").addEventListener("change", event => {
       const value = event.target.value;
       const separator = value.indexOf(":");
-      state.settings.provider = value.slice(0, separator);
-      state.settings.model = value.slice(separator + 1);
+      const nextProvider = value.slice(0, separator);
+      const nextModel = value.slice(separator + 1);
+      const modelChanged = nextModel !== state.settings.model;
+      state.settings.provider = nextProvider;
+      state.settings.model = nextModel;
       state.settings.modelPinned = true;
+      if (modelChanged) applyModelDefaults(nextModel);
       saveSettings();
-      updateAdvancedVisibility();
-      updateComposerNote();
-      updateSendButton();
+      updateModeUI();
     });
 
     $("#advancedToggle").addEventListener("click", () => {
@@ -891,8 +971,10 @@
         const url = normalizeBackendUrl($("#backendUrlInput").value);
         state.settings.backendUrl = url;
         state.accessToken = $("#accessTokenInput").value.trim();
+        state.hfToken = $("#hfTokenInput").value.trim();
         saveSettings();
         saveAccessToken();
+        saveHfToken();
         $("#settingsDialog").close();
         await checkBackend();
         if (state.backend.status === "online") toast("Backend connected.");
@@ -905,7 +987,12 @@
       button.disabled = true;
       result.className = "";
       result.textContent = "Testing…";
-      const test = await checkBackend($("#backendUrlInput").value, $("#accessTokenInput").value.trim(), false);
+      const test = await checkBackend(
+        $("#backendUrlInput").value,
+        $("#accessTokenInput").value.trim(),
+        false,
+        $("#hfTokenInput").value.trim()
+      );
       button.disabled = false;
       result.className = test.ok ? "success" : "error";
       result.textContent = test.ok ? `Connected · ${test.data.providers?.filter(provider => provider.configured).length || 0} provider(s) ready` : test.error;

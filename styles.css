@@ -322,6 +322,13 @@ code { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; fo
 .provider-guide-list article p { color: var(--muted); font-size: 10px; line-height: 1.55; margin: 7px 0 9px; }
 .provider-meta { display: flex; gap: 10px; flex-wrap: wrap; color: var(--faint); font-size: 8.5px; }
 .provider-meta span:before { content: "✓"; color: #7d9670; margin-right: 4px; }
+.model-guide-heading { margin: 22px 0 9px; color: var(--faint); font-size: 8px; font-weight: 700; letter-spacing: 1.5px; }
+.model-catalog-guide { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.model-catalog-guide > div { border: 1px solid var(--border-soft); border-radius: 10px; background: #12171c; padding: 11px 12px; }
+.model-catalog-guide strong, .model-catalog-guide span, .model-catalog-guide small { display: block; }
+.model-catalog-guide strong { color: var(--text-soft); font-size: 10.5px; font-weight: 600; }
+.model-catalog-guide span { color: #9caf8d; font-size: 8px; margin-top: 4px; }
+.model-catalog-guide small { color: var(--faint); font-size: 8.5px; line-height: 1.5; margin-top: 5px; }
 .plain-note { display: flex; align-items: flex-start; gap: 9px; border: 1px solid #2c362b; border-radius: 10px; background: rgba(186,242,124,.025); padding: 11px 12px; margin-top: 16px; }
 .plain-note svg { width: 15px; height: 15px; color: #91a681; margin-top: 1px; }
 .plain-note p { color: #929e8b; font-size: 9.5px; line-height: 1.6; margin: 0; }
@@ -442,7 +449,7 @@ code { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; fo
   .guide-lead h3 { font-size: 23px; }
   .provider-guide-list article { padding: 12px; gap: 10px; }
   .provider-guide-icon { width: 32px; height: 32px; }
-  .practice-grid { grid-template-columns: 1fr; }
+  .practice-grid, .model-catalog-guide { grid-template-columns: 1fr; }
   .image-modal { padding-left: 10px; padding-right: 10px; }
   .image-modal-footer { left: 12px; right: 12px; }
 }
