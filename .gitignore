@@ -1,0 +1,26 @@
+# Credentials and local configuration
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Downloaded weights and generated media
+models/
+outputs/
+*.onnx
+*.pth
+*.safetensors
+
+# Logs and OS/editor files
+*.log
+.DS_Store
+.vscode/
+.idea/

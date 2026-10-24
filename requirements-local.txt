@@ -1,0 +1,7 @@
+# Install requirements.txt as well. Colab already includes a compatible torch build.
+torch>=2.2
+# Diffusers provides InstructPix2Pix and SDXL image-to-image pipelines.
+diffusers>=0.32,<1
+transformers>=4.44,<6
+accelerate>=0.33,<2
+safetensors>=0.4,<1

@@ -1,0 +1,4 @@
+# Optional: face swap is not required for ordinary image editing.
+insightface==0.7.3
+onnxruntime>=1.17,<2
+opencv-python-headless>=4.9,<5
