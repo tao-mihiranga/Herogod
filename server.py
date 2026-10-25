@@ -1,45 +1,47 @@
-"""Herogod web and API server.
+"""Herogod server: FastAPI JSON API + the static studio frontend.
 
-Run with: python server.py
-The same process serves the dependency-free frontend and the JSON image API.
+    python server.py                  # http://0.0.0.0:8000
+    python server.py --mock           # no torch, scripted preview output
+
+The same process serves `web/`, so the browser talks to relative URLs and no
+CORS or build step is involved.
 """
 from __future__ import annotations
 
 import argparse
 import asyncio
-import base64
 import hmac
-import importlib.util
 import io
+import json
 import logging
 import os
-import time
+import re
 from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from PIL import Image, ImageOps, UnidentifiedImageError
 
-from backend import providers
-from backend.face_swap import face_swap_configured, swap_face
-from backend.providers import ProviderError
-
-ROOT = Path(__file__).resolve().parent
-MAX_IMAGE_BYTES = 15 * 1024 * 1024
-MAX_REQUEST_BYTES = 32 * 1024 * 1024
-MAX_IMAGE_PIXELS = 40_000_000
-ALLOWED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/webp"}
-ALLOWED_PIL_FORMATS = {"PNG", "JPEG", "WEBP"}
-Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
+from app.config import APP_NAME, APP_VERSION, SETTINGS, WEB_DIR, catalog
+from app.engine import EngineError, get_engine
+from app.jobs import JOBS, start_job
+from app.prompts import RequestProblem, parse_seed, resolve_prompt, target_size
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("herogod")
 
+MAX_IMAGE_BYTES = SETTINGS.max_image_bytes
+MAX_REQUEST_BYTES = SETTINGS.max_request_bytes
+MAX_IMAGE_PIXELS = SETTINGS.max_image_pixels
+ALLOWED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/webp"}
+ALLOWED_PIL_FORMATS = {"PNG", "JPEG", "WEBP"}
+Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
+
 app = FastAPI(
-    title="Herogod API",
-    version="1.0.0",
+    title=f"{APP_NAME} API",
+    version=APP_VERSION,
     docs_url="/api/docs",
     redoc_url=None,
     openapi_url="/api/openapi.json",
@@ -48,31 +50,36 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=False,
-    allow_methods=["GET", "POST", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Herogod-Token", "X-HF-Token"],
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Herogod-Token"],
     max_age=86400,
 )
-try:
-    INFERENCE_LIMITER = asyncio.Semaphore(max(1, int(os.getenv("HEROGOD_MAX_CONCURRENCY", "1"))))
-except ValueError:
-    INFERENCE_LIMITER = asyncio.Semaphore(1)
-
 
 @app.middleware("http")
-async def security_and_size_headers(request: Request, call_next: Any) -> Any:
+async def security_headers(request: Request, call_next: Any) -> Any:
     content_length = request.headers.get("content-length")
     if content_length:
         try:
             if int(content_length) > MAX_REQUEST_BYTES:
-                return JSONResponse(status_code=413, content={"detail": "Request is too large. Each image must be 15 MB or smaller."})
+                return JSONResponse(
+                    status_code=413,
+                    content={"detail": "Request is too large. Each image must be 15 MB or smaller."},
+                )
         except ValueError:
             return JSONResponse(status_code=400, content={"detail": "Invalid Content-Length header."})
+
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "no-referrer"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-    if request.url.path == "/api/docs":
-        # FastAPI's Swagger page uses its official jsDelivr assets and inline bootstrap.
+    is_image = re.search(r"^/api/jobs/[\w-]+/(image|thumb)$", request.url.path)
+    if request.url.path.startswith("/api/") and not is_image:
+        response.headers["Cache-Control"] = "no-store"
+    elif is_image:
+        response.headers["Cache-Control"] = "private, max-age=86400"
+    if request.url.path in {"/", "/index.html"}:
+        response.headers["Cache-Control"] = "no-cache"
+    if request.url.path.startswith("/api/docs"):
         response.headers["Content-Security-Policy"] = (
             "default-src 'self' https://cdn.jsdelivr.net; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
             "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data: https://cdn.jsdelivr.net; "
@@ -80,112 +87,55 @@ async def security_and_size_headers(request: Request, call_next: Any) -> Any:
         )
     else:
         response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; "
-            "connect-src 'self' http: https:; font-src 'self'; object-src 'none'; base-uri 'self'"
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data: blob:; connect-src 'self' http: https:; media-src 'self' blob:; "
+            "font-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors *"
         )
-    if request.url.path.startswith("/api/"):
-        response.headers["Cache-Control"] = "no-store"
     return response
 
 
-async def authorize(request: Request) -> None:
-    expected = os.getenv("HEROGOD_API_TOKEN", "").strip()
+def token_valid(supplied: str) -> bool:
+    expected = SETTINGS.api_token
     if not expected:
+        return True
+    supplied = (supplied or "").strip()
+    return bool(supplied) and hmac.compare_digest(supplied, expected)
+
+
+async def authorize(request: Request, token: str | None = Query(default=None)) -> None:
+    if not SETTINGS.api_token:
         return
+    header = request.headers.get("x-herogod-token", "").strip()
     authorization = request.headers.get("authorization", "")
     bearer = authorization[7:].strip() if authorization.lower().startswith("bearer ") else ""
-    supplied = request.headers.get("x-herogod-token", "").strip() or bearer
-    if not supplied or not hmac.compare_digest(supplied, expected):
-        raise HTTPException(status_code=401, detail="A valid Herogod access token is required.")
+    if token_valid(header or bearer or (token or "")):
+        return
+    raise HTTPException(status_code=401, detail="A valid Herogod access token is required.")
 
 
-@app.exception_handler(ProviderError)
-async def provider_error_handler(_request: Request, error: ProviderError) -> JSONResponse:
+@app.exception_handler(EngineError)
+async def engine_error_handler(_request: Request, error: EngineError) -> JSONResponse:
     return JSONResponse(status_code=error.status_code, content={"detail": str(error)})
 
 
-def module_installed(name: str) -> bool:
-    try:
-        return importlib.util.find_spec(name) is not None
-    except (ImportError, ModuleNotFoundError):
-        return False
+@app.exception_handler(RequestProblem)
+async def request_problem_handler(_request: Request, error: RequestProblem) -> JSONResponse:
+    return JSONResponse(status_code=error.status_code, content={"detail": str(error)})
 
 
-def supplied_hf_token(request: Request) -> str | None:
-    token = request.headers.get("x-hf-token", "").strip()
-    if len(token) > 512:
-        raise HTTPException(status_code=400, detail="The HF token header is too long.")
-    return token or None
-
-
-@app.get("/api/health", dependencies=[Depends(authorize)])
-async def health(request: Request) -> dict[str, Any]:
-    hf_token = supplied_hf_token(request)
-    environment_hf_token = os.getenv("HF_TOKEN", "").strip()
-    local_ready = module_installed("torch") and module_installed("diffusers")
-    huggingface_ready = bool(hf_token or environment_hf_token) and module_installed("huggingface_hub")
-    gemini_ready = bool(os.getenv("GEMINI_API_KEY")) and module_installed("google.genai")
-    return {
-        "app": "Herogod",
-        "version": "1.0.0",
-        "status": "ok",
-        "providers": [
-            {
-                "id": "local",
-                "name": "Local / Colab",
-                "configured": local_ready,
-                "default_model": os.getenv("HEROGOD_MODEL", providers.INSTRUCT_PIX2PIX),
-                "requires_api_key": False,
-                "provider_filters": False,
-            },
-            {
-                "id": "huggingface",
-                "name": "Hugging Face",
-                "configured": huggingface_ready,
-                "default_model": providers.INSTRUCT_PIX2PIX,
-                "requires_api_key": True,
-                "provider_filters": True,
-            },
-            {
-                "id": "gemini",
-                "name": "Gemini",
-                "configured": gemini_ready,
-                "default_model": os.getenv("GEMINI_MODEL", providers.DEFAULT_GEMINI_MODEL),
-                "requires_api_key": True,
-                "provider_filters": True,
-            },
-        ],
-        "capabilities": {
-            "image_edit": True,
-            "face_swap": face_swap_configured() and module_installed("insightface"),
-            "server_side_history": False,
-        },
-        "models": providers.model_catalog(token_available=bool(hf_token or environment_hf_token)),
-        "runtime": {"local_model_status": providers.LOCAL_MANAGER.status},
-    }
-
-
-async def read_image(upload: UploadFile, label: str = "Image") -> Image.Image:
-    if upload.content_type not in ALLOWED_IMAGE_TYPES:
-        await upload.close()
-        raise HTTPException(status_code=415, detail=f"{label} must be a PNG, JPG, or WebP file.")
-    try:
-        data = await upload.read(MAX_IMAGE_BYTES + 1)
-    finally:
-        # Starlette may spool large uploads to a temporary file; close it promptly.
-        await upload.close()
+def read_image_bytes(data: bytes, label: str) -> Image.Image:
     if not data:
-        raise HTTPException(status_code=400, detail=f"{label} is empty.")
+        raise RequestProblem(f"{label} is empty.", 400)
     if len(data) > MAX_IMAGE_BYTES:
-        raise HTTPException(status_code=413, detail=f"{label} is larger than 15 MB.")
+        raise RequestProblem(f"{label} is larger than 15 MB.", 413)
     try:
         image = Image.open(io.BytesIO(data))
         if image.format not in ALLOWED_PIL_FORMATS:
-            raise HTTPException(status_code=415, detail=f"{label} format is not supported.")
-        if image.width < 16 or image.height < 16:
-            raise HTTPException(status_code=422, detail=f"{label} must be at least 16 × 16 pixels.")
+            raise RequestProblem(f"{label} must be a PNG, JPG or WebP file.", 415)
+        if image.width < 32 or image.height < 32:
+            raise RequestProblem(f"{label} must be at least 32 x 32 pixels.", 422)
         if image.width * image.height > MAX_IMAGE_PIXELS:
-            raise HTTPException(status_code=413, detail=f"{label} has too many pixels (maximum {MAX_IMAGE_PIXELS:,}).")
+            raise RequestProblem(f"{label} has too many pixels (maximum {MAX_IMAGE_PIXELS:,}).", 413)
         image = ImageOps.exif_transpose(image)
         image.load()
         if image.mode in {"RGBA", "LA"} or (image.mode == "P" and "transparency" in image.info):
@@ -193,132 +143,269 @@ async def read_image(upload: UploadFile, label: str = "Image") -> Image.Image:
             background = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
             image = Image.alpha_composite(background, rgba)
         return image.convert("RGB")
-    except HTTPException:
+    except RequestProblem:
         raise
     except Image.DecompressionBombError as error:
-        raise HTTPException(status_code=413, detail=f"{label} is too large to decode safely.") from error
+        raise RequestProblem(f"{label} is too large to decode safely.", 413) from error
     except (UnidentifiedImageError, OSError, ValueError) as error:
-        raise HTTPException(status_code=422, detail=f"{label} could not be decoded as a valid image.") from error
+        raise RequestProblem(f"{label} could not be decoded as an image.", 422) from error
 
 
-def encode_image(image: Image.Image) -> str:
-    buffer = io.BytesIO()
-    image.save(buffer, format="PNG", optimize=False, compress_level=6)
-    return f"data:image/png;base64,{base64.b64encode(buffer.getvalue()).decode('ascii')}"
+async def read_upload(upload: UploadFile, label: str) -> Image.Image:
+    if upload.content_type and upload.content_type not in ALLOWED_IMAGE_TYPES:
+        await upload.close()
+        raise RequestProblem(f"{label} must be a PNG, JPG or WebP file.", 415)
+    try:
+        data = await upload.read(MAX_IMAGE_BYTES + 1)
+    finally:
+        await upload.close()
+    return await asyncio.to_thread(read_image_bytes, data, label)
 
 
-@app.post("/api/edit", dependencies=[Depends(authorize)])
-async def edit_image(
-    request: Request,
-    image: UploadFile = File(...),
-    prompt: str = Form(..., min_length=1, max_length=2000),
-    provider: str = Form("local"),
-    model: str = Form(providers.INSTRUCT_PIX2PIX, max_length=200),
-    steps: int = Form(0, ge=0, le=50),
-    guidance: float = Form(0, ge=0, le=15),
-    image_guidance: float = Form(1.5, ge=0.5, le=3),
-    strength: float = Form(0.65, ge=0.1, le=1),
-    seed: int = Form(-1, ge=-1, le=2_147_483_647),
-) -> dict[str, Any]:
-    prompt = prompt.strip()
-    if not prompt:
-        raise HTTPException(status_code=422, detail="Describe the edit you want to make.")
-    if provider not in {"local", "huggingface", "gemini"}:
-        raise HTTPException(status_code=400, detail="Unknown provider. Choose local, huggingface, or gemini.")
-    source = await read_image(image)
-    hf_token = supplied_hf_token(request)
-    started = time.perf_counter()
-    async with INFERENCE_LIMITER:
-        if provider == "local":
-            result = await asyncio.to_thread(
-                providers.local_edit,
-                image=source,
-                prompt=prompt,
-                model_id=model,
-                steps=steps,
-                guidance=guidance,
-                image_guidance=image_guidance,
-                strength=strength,
-                seed=seed,
-                hf_token=hf_token,
-            )
-        elif provider == "huggingface":
-            result = await asyncio.to_thread(
-                providers.huggingface_edit,
-                image=source,
-                prompt=prompt,
-                model_id=model,
-                steps=steps,
-                guidance=guidance,
-                hf_token=hf_token,
-            )
-        else:
-            result = await asyncio.to_thread(providers.gemini_edit, image=source, prompt=prompt, model_id=model)
-        encoded = await asyncio.to_thread(encode_image, result.image)
-    elapsed_ms = round((time.perf_counter() - started) * 1000)
-    logger.info("Image edit complete provider=%s model=%s elapsed_ms=%s", provider, model, elapsed_ms)
+def parse_styles(raw: str) -> list[str]:
+    raw = (raw or "").strip()
+    if not raw:
+        return []
+    if raw.startswith("["):
+        try:
+            value = json.loads(raw)
+        except json.JSONDecodeError as error:
+            raise RequestProblem("The styles payload is not valid JSON.", 400) from error
+        if not isinstance(value, list):
+            raise RequestProblem("The styles payload must be a list.", 400)
+        return [str(item) for item in value]
+    return [part.strip() for part in raw.split(",") if part.strip()]
+
+
+# ---------------------------------------------------------------------------
+# Meta endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/health", include_in_schema=False)
+async def health() -> dict[str, Any]:
     return {
-        "image": encoded,
-        "provider": result.provider,
-        "model": result.model,
-        "seed": result.seed,
-        "elapsed_ms": elapsed_ms,
+        "status": "ok",
+        "app": APP_NAME,
+        "version": APP_VERSION,
+        "token_required": bool(SETTINGS.api_token),
+        "mock": SETTINGS.mock,
+        "engine": get_engine().status()["state"],
     }
 
 
-@app.post("/api/face-swap", dependencies=[Depends(authorize)])
-async def face_swap(
+@app.get("/api/config", dependencies=[Depends(authorize)])
+async def config() -> dict[str, Any]:
+    data = SETTINGS.public()
+    data.update(catalog())
+    return data
+
+
+@app.get("/api/engine", dependencies=[Depends(authorize)])
+async def engine_status() -> dict[str, Any]:
+    return await asyncio.to_thread(get_engine().status)
+
+
+@app.post("/api/engine/load", dependencies=[Depends(authorize)])
+async def engine_load() -> dict[str, Any]:
+    engine = get_engine()
+    await asyncio.to_thread(engine._ensure_loaded)
+    return await asyncio.to_thread(engine.status)
+
+
+@app.post("/api/engine/unload", dependencies=[Depends(authorize)])
+async def engine_unload() -> dict[str, Any]:
+    engine = get_engine()
+    result = await asyncio.to_thread(engine.unload)
+    result["status"] = await asyncio.to_thread(engine.status)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Jobs
+# ---------------------------------------------------------------------------
+
+
+@app.post("/api/jobs", dependencies=[Depends(authorize)], status_code=202)
+async def create_job(
+    prompt: str = Form(...),
     image: UploadFile = File(...),
-    reference_image: UploadFile = File(...),
-    consent: bool = Form(False),
+    refs: list[UploadFile] = File(default=[]),
+    negative: str = Form(""),
+    styles: str = Form(""),
+    steps: int = Form(20),
+    true_cfg: float = Form(4.0),
+    lora_scale: float = Form(1.0),
+    adapter: str = Form(""),
+    seed: int = Form(-1),
+    aspect: str = Form("match"),
+    width: int = Form(0),
+    height: int = Form(0),
 ) -> dict[str, Any]:
-    if not consent:
-        raise HTTPException(status_code=400, detail="Consent confirmation is required for face swapping.")
-    target = await read_image(image, "Target image")
-    reference = await read_image(reference_image, "Reference image")
-    started = time.perf_counter()
-    async with INFERENCE_LIMITER:
-        result = await asyncio.to_thread(swap_face, target=target, reference=reference)
-        encoded = await asyncio.to_thread(encode_image, result)
-    elapsed_ms = round((time.perf_counter() - started) * 1000)
-    logger.info("Face swap complete elapsed_ms=%s", elapsed_ms)
-    return {
-        "image": encoded,
-        "provider": "local",
-        "model": "insightface/inswapper_128",
-        "seed": None,
-        "elapsed_ms": elapsed_ms,
+    resolved = await asyncio.to_thread(resolve_prompt, prompt, await asyncio.to_thread(parse_styles, styles), negative)
+
+    steps = max(1, min(int(steps), SETTINGS.max_steps))
+    true_cfg = max(0.0, min(float(true_cfg), 20.0))
+    lora_scale = max(0.0, min(float(lora_scale), 2.0))
+
+    if len(refs) > SETTINGS.max_refs:
+        raise RequestProblem(f"At most {SETTINGS.max_refs} reference images are supported.", 400)
+
+    source = await read_upload(image, "Base image")
+    reference_images = [await read_upload(upload, f"Reference {index + 1}") for index, upload in enumerate(refs)]
+    images = [source, *reference_images]
+
+    size = await asyncio.to_thread(
+        target_size, source, aspect, int(width) or None, int(height) or None, SETTINGS.max_pixels
+    )
+
+    settings = {
+        "steps": steps,
+        "true_cfg": round(true_cfg, 2),
+        "lora_scale": round(lora_scale, 2),
+        "adapter": adapter.strip(),
+        "seed": parse_seed(seed),
+        "aspect": aspect,
+        "size": [size[0], size[1]],
+        "styles": resolved.style_ids,
+        "engine": get_engine().name,
     }
+    labels = ["base", *[f"ref{i + 1}" for i in range(len(reference_images))]]
+    job = start_job(
+        prompt=resolved.prompt,
+        negative=resolved.negative,
+        images=images,
+        settings=settings,
+        ref_labels=labels,
+    )
+    logger.info("Job %s queued (%sx%s, %s steps, adapter=%s)", job.id, size[0], size[1], steps, settings["adapter"])
+    return job.public()
+
+
+@app.get("/api/jobs", dependencies=[Depends(authorize)])
+async def list_jobs() -> dict[str, Any]:
+    jobs = [job.public() for job in reversed(JOBS.all())]
+    return {"jobs": jobs}
+
+
+@app.get("/api/jobs/{job_id}", dependencies=[Depends(authorize)])
+async def get_job(job_id: str) -> dict[str, Any]:
+    job = JOBS.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Unknown job.")
+    return job.public()
+
+
+@app.post("/api/jobs/{job_id}/cancel", dependencies=[Depends(authorize)])
+async def cancel_job(job_id: str) -> dict[str, Any]:
+    job = JOBS.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Unknown job.")
+    job.cancel()
+    return job.public()
+
+
+@app.get("/api/jobs/{job_id}/image", dependencies=[Depends(authorize)], include_in_schema=False)
+async def job_image(job_id: str) -> Response:
+    return image_response(job_id, "full")
+
+
+@app.get("/api/jobs/{job_id}/thumb", dependencies=[Depends(authorize)], include_in_schema=False)
+async def job_thumb(job_id: str) -> Response:
+    return image_response(job_id, "thumb")
+
+
+def image_response(job_id: str, variant: str) -> Response:
+    job = JOBS.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Unknown job.")
+    data = job.image_bytes(variant)
+    if data is None:
+        raise HTTPException(status_code=404, detail="This job has no image yet.")
+    return Response(content=data, media_type="image/png", headers={"Cache-Control": "private, max-age=86400"})
+
+
+@app.delete("/api/jobs", dependencies=[Depends(authorize)])
+async def clear_jobs() -> dict[str, Any]:
+    removed = JOBS.clear_finished()
+    return {"removed": removed, "remaining": len(JOBS.all())}
+
+
+# ---------------------------------------------------------------------------
+# Static frontend
+# ---------------------------------------------------------------------------
+
+
+def static_file(relative: str, media_type: str | None = None) -> FileResponse:
+    path = (WEB_DIR / relative).resolve()
+    if WEB_DIR.resolve() not in path.parents or not path.is_file():
+        raise HTTPException(status_code=404, detail="Not found.")
+    return FileResponse(path, media_type=media_type)
 
 
 @app.get("/", include_in_schema=False)
 async def index() -> FileResponse:
-    return FileResponse(ROOT / "index.html")
+    return static_file("index.html", "text/html; charset=utf-8")
+
+
+@app.get("/index.html", include_in_schema=False)
+async def index_alias() -> FileResponse:
+    return static_file("index.html", "text/html; charset=utf-8")
 
 
 @app.get("/styles.css", include_in_schema=False)
-async def stylesheet() -> FileResponse:
-    return FileResponse(ROOT / "styles.css", media_type="text/css")
+async def styles() -> FileResponse:
+    return static_file("styles.css", "text/css; charset=utf-8")
 
 
 @app.get("/app.js", include_in_schema=False)
-async def javascript() -> FileResponse:
-    return FileResponse(ROOT / "app.js", media_type="text/javascript")
+async def app_js() -> FileResponse:
+    return static_file("app.js", "text/javascript; charset=utf-8")
 
 
 @app.get("/favicon.svg", include_in_schema=False)
 async def favicon() -> FileResponse:
-    return FileResponse(ROOT / "favicon.svg", media_type="image/svg+xml")
+    path = Path(__file__).resolve().parent / "favicon.svg"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Not found.")
+    return FileResponse(path, media_type="image/svg+xml")
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run the Herogod web and API server")
-    parser.add_argument("--host", default=os.getenv("HOST", "0.0.0.0"))
-    parser.add_argument("--port", type=int, default=int(os.getenv("PORT", "8000")))
+    parser = argparse.ArgumentParser(description=f"Run the {APP_NAME} studio")
+    parser.add_argument("--host", default=SETTINGS.host)
+    parser.add_argument("--port", type=int, default=SETTINGS.port)
+    parser.add_argument("--mock", action="store_true", help="Use the mock engine (no GPU, no downloads)")
+    parser.add_argument("--no-token", action="store_true", help="Disable the access token check (trusted networks only)")
+    parser.add_argument("--preload", action="store_true", help="Load the model during startup instead of on first use")
     args = parser.parse_args()
-    if args.host not in {"127.0.0.1", "localhost", "::1"} and not os.getenv("HEROGOD_API_TOKEN"):
-        logger.warning("The server is network-accessible without HEROGOD_API_TOKEN. Set a token before using a public tunnel.")
+
+    if args.mock:
+        os.environ["HEROGOD_MOCK"] = "1"
+        SETTINGS.mock = True
+    if args.no_token:
+        SETTINGS.api_token = ""
+
+    logging.getLogger("herogod").info("%s %s starting (engine=%s)", APP_NAME, APP_VERSION, "mock" if SETTINGS.mock else "qwen")
+    if SETTINGS.api_token:
+        logger.info("Access token protection is ON.")
+    elif args.host not in {"127.0.0.1", "localhost", "::1"}:
+        logger.warning("No HEROGOD_API_TOKEN set: the API is open to anyone who can reach this port.")
+
+    if args.preload and not SETTINGS.mock:
+        async def preload() -> None:
+            try:
+                await asyncio.to_thread(get_engine()._ensure_loaded)
+                logger.info("Model preloaded.")
+            except Exception as error:  # pragma: no cover - startup diagnostics
+                logger.error("Model preload failed: %s", error)
+
+        @app.on_event("startup")
+        async def _startup() -> None:
+            asyncio.create_task(preload())
+
     import uvicorn
+
     uvicorn.run(app, host=args.host, port=args.port, log_level=os.getenv("LOG_LEVEL", "info").lower())
 
 
