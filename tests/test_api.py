@@ -65,6 +65,7 @@ def test_engine_status_reports_mock(client):
     assert body["engine"] == "mock"
     assert body["state"] == "ready"
     assert body["adapters"]
+    assert "hf_token" in body
 
 
 def test_full_job_lifecycle(client):
