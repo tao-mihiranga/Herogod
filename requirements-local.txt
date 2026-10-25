@@ -1,10 +1,15 @@
-# Install requirements.txt as well. Python 3.11+ is required by Diffusers 0.42.
-# Colab already includes a compatible PyTorch build; install a CUDA-appropriate build locally.
-torch>=2.2
-torchvision>=0.17
-# Diffusers 0.42 includes FLUX 3 Klein and Bria FIBO 2.0 pipelines.
-diffusers>=0.42,<1
-# Transformers 5.8+ includes the Qwen3.5 class used by the optional FLUX PUP.
-transformers>=5.8,<6
-accelerate>=1,<3
+# Local inference. Install on top of requirements.txt.
+-r requirements.txt
+
+# Colab already ships a CUDA-matched torch; locally install the right build first:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu124
+torch>=2.5
+torchvision
+
+# QwenImageEditPlusPipeline (Qwen-Image-Edit-2511) lives in diffusers 0.36+.
+diffusers>=0.36,<1
+transformers>=4.57
+accelerate>=1,<2
 safetensors>=0.4,<1
+sentencepiece>=0.2,<1
+protobuf>=4

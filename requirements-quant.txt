@@ -1,0 +1,2 @@
+# Optional 4-bit loading (HEROGOD_QUANT=bnb4). Saves a lot of VRAM, costs some quality.
+bitsandbytes>=0.45

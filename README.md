@@ -1,188 +1,278 @@
-# Herogod
+# Herogod — Qwen Image Edit Studio
 
-**A chat-based, self-hostable AI image studio.** Upload an image, ask for a change, and iterate on the result. Run open models on your own GPU or Google Colab, or connect your own free-tier Hugging Face / Gemini credentials.
+A self-hosted image **editing** studio for people who would rather run the model than rent an API.
+Drop in a photo, describe the change, and iterate — with Fooocus-style styles, reference images,
+true-CFG control and a before/after canvas.
 
-Herogod is dependency-free in the browser: **double-click `index.html` and the interface works**. A backend is required for actual AI inference; the app never pretends a disconnected edit succeeded.
+It is built around one pipeline:
 
-## What is included
+| Piece | Value |
+| --- | --- |
+| Base model | [`Qwen/Qwen-Image-Edit-2511`](https://huggingface.co/Qwen/Qwen-Image-Edit-2511) (`QwenImageEditPlusPipeline`) |
+| Adapter | [`ScottzillaSystems/qwen-image-edit-plus-nsfw-lora`](https://huggingface.co/ScottzillaSystems/qwen-image-edit-plus-nsfw-lora) — MCNL v1, 590 MB |
+| Adapter name | `mcnl-nsfw-v1` |
+| Licences | Apache-2.0 (base) · OpenRAIL++ (LoRA) |
 
-- Modern ChatGPT/Gemini-style chat UI with drag-and-drop uploads
-- Iterative editing: **Use as input** applies another prompt to the latest result
-- Local browser chat/image history using IndexedDB (up to 20 creations)
-- **InstructPix2Pix** for lightweight instruction-based local edits
-- **SDXL img2img** for local restyling with adjustable strength
-- **FLUX 3 Image Klein** with modular Diffusers, full-caption editing, and optional official prompt upsampling
-- **FIBO 2.0 Edit Turbo** with its required 4-step/no-CFG defaults, locally or through supported HF Inference Providers
-- **Qwen Image Edit 2511** with its dedicated Plus pipeline and true-CFG controls
-- A model registry with per-model defaults, gated-model token handling, and hardware/license guidance
-- Optional **InsightFace / INSwapper** face swapping with an explicit consent step
-- Hugging Face image-to-image inference using your own token and available credits
-- Gemini image editing using your own Google AI Studio key
-- Colab notebook with a temporary HTTPS Cloudflare tunnel and generated access token
-- PNG downloads, full-screen previews, seeds, steps, guidance, and image-adherence controls
-- No framework, npm install, CDN, tracking, prompt log, or server-side image history
+No cloud API, no moderation layer, no prompt log. Everything runs on the machine (or Colab runtime)
+that serves the page. The adapter's own model card lists the trigger words its training used; the
+studio passes your instruction through unchanged, so include them yourself if you want those concepts.
 
-> **What “uncensored” means here:** the self-hosted pipeline does not add a cloud moderation layer or secretly rewrite prompts. FLUX 3’s official prompt upsampler is optional and clearly indicated. Herogod does **not** jailbreak or bypass third-party API safeguards. Hosted provider rules, model licenses, and the law still apply. Do not use it for non-consensual intimate imagery, sexual content involving minors, harassment, fraud, or deception.
+> **Adults only.** The default adapter is trained for adult content. Do not use this project to make
+> sexual content involving minors, non-consensual intimate imagery, or content that harasses,
+> impersonates or defrauds anyone. Follow the law where you live and the licences of the weights.
+> You are responsible for what you generate.
 
-## Fastest start: Google Colab
+---
+
+## Quick start on Google Colab
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/tao-mihiranga/Herogod/blob/main/Herogod_Colab.ipynb)
 
-1. Open the notebook and select **Runtime → Change runtime type → T4 GPU** for InstructPix2Pix or SDXL. Free GPU availability varies. FLUX 3, FIBO 2, and Qwen are high-memory checkpoints and are not all practical on a free T4.
-2. Run the cells in order. Keep the default `timbrooks/instruct-pix2pix` model for the easiest T4 setup, or choose another registered model in **Runtime choices**.
-3. The launcher prints a `https://…trycloudflare.com` studio/backend URL and a random Herogod access token.
-4. Open the studio URL. In **Connection settings**, paste the access token. If you opened `index.html` separately, paste both the URL and token.
-5. Add an image, describe the edit, and send.
+1. Open [`Herogod_Colab.ipynb`](Herogod_Colab.ipynb) and pick **Runtime → Change runtime type → GPU**
+   (L4/A100 preferred; T4 works at a lower pixel budget).
+2. Run the cells in order. Cell 2 is a form: dtype, quantisation, offload, pixel budget, steps.
+3. Cell 4 **downloads the weights into Colab** (`/content/models`): ~40 GB base + 590 MB LoRA.
+   Skip it and the model downloads lazily on the first edit instead.
+4. Cell 5 starts the server, cell 6 opens a Cloudflare quick tunnel and prints:
+   ```
+   Studio:         https://something.trycloudflare.com
+   One-click link: https://something.trycloudflare.com/?token=…
+   Access token:   …
+   ```
+5. Open the one-click link (or paste the token into **Engine → Connection**).
+6. Add an image, type an instruction, press **Generate**.
 
-The first request can take several minutes while model weights download. Keep Colab running. Closing/resetting the runtime stops the backend and invalidates the temporary tunnel.
+Set `PUBLIC_TUNNEL = False` in cell 2 to use Colab's private proxy instead of a public URL.
 
-### Optional Colab API keys
+The first generation after loading a 40 GB model takes several minutes on a T4. Keep the runtime alive;
+closing it kills the tunnel and the model.
 
-For a shared runtime, add `HF_TOKEN` and/or `GEMINI_API_KEY` in Colab Secrets and allow notebook access **before** running the configuration cell. Values are loaded into the backend environment and never printed. Alternatively, paste your HF token into **Connection settings → Your HF token**; it is stored only in that browser tab and forwarded to your configured backend for hosted inference or gated downloads.
-
-Ungated InstructPix2Pix, SDXL, and Qwen checkpoints need no AI key. FLUX 3 and FIBO 2 are gated: accept their conditions on Hugging Face first, then provide a token with read access. Hosted HF Inference additionally needs Inference Providers permission.
-
-### Optional face swap in Colab
-
-Set `ENABLE_FACE_SWAP = True` in the configuration cell before the installation cell. The notebook installs InsightFace and verifies the INSwapper model checksum. Review its license before use; InsightFace weights are generally distributed for non-commercial research.
+---
 
 ## Run locally
 
-### 1. Open just the interface
-
-Open `index.html` in any modern browser. No server or build step is needed for the UI. It defaults to `http://127.0.0.1:8000` for AI requests.
-
-### 2. Start the API-only backend
-
-This supports hosted providers; local Diffusers requires the next step too.
-
 ```bash
-python -m venv .venv
-source .venv/bin/activate             # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-export HEROGOD_API_TOKEN="a-long-random-string"
-python server.py
+git clone https://github.com/tao-mihiranga/Herogod.git
+cd Herogod
+
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt            # server + UI only
+
+# optional: try the UI with no GPU and no downloads
+python server.py --mock
 ```
 
-Open **http://127.0.0.1:8000**. Enter your Herogod access token in Connection settings. The server binds to `0.0.0.0` by default so it also works in containers and tunnels; use `--host 127.0.0.1` if you want loopback only.
-
-### 3. Enable local open models
-
-Use **Python 3.11+** and a PyTorch environment appropriate for your GPU. Colab already includes PyTorch. The local requirements use Diffusers 0.42+ for FLUX 3/FIBO 2 and Transformers 5.8+ for their Qwen3-VL/Qwen3.5 components, including the optional FLUX prompt upsampler.
+For real inference install the diffusion stack matching your CUDA build:
 
 ```bash
+pip install torch --index-url https://download.pytorch.org/whl/cu124   # or cu126 / rocm / cpu
 pip install -r requirements-local.txt
-python server.py
+pip install -r requirements-quant.txt      # optional, for HEROGOD_QUANT=bnb4
+
+python scripts/download_models.py --dest models    # pre-download ~40 GB
+python server.py                                   # http://localhost:8000
 ```
 
-For CUDA, install the matching PyTorch build using the [official PyTorch instructions](https://pytorch.org/get-started/locally/) if your environment does not already have it. CPU inference is supported for InstructPix2Pix/SDXL but slow; FLUX 3, FIBO 2, and Qwen require CUDA in this integration.
+If you downloaded into `models/`, the server finds the snapshot automatically. Otherwise `HEROGOD_BASE_MODEL_PATH`
+points it at a directory.
 
-### 4. Enable optional face swap
+Typical standalone flags:
 
 ```bash
-pip install -r requirements-face.txt
-python scripts/setup_face_swap.py
-python server.py
+python server.py --host 0.0.0.0 --port 8000        # LAN access
+python server.py --preload                          # load the model at boot, not on first edit
+python server.py --mock                             # placeholder engine for UI work
+HEROGOD_API_TOKEN=$(python -c "import secrets;print(secrets.token_urlsafe(30))") python server.py
 ```
 
-The setup script downloads roughly 529 MB and verifies SHA-256 integrity. The `buffalo_l` detector pack is fetched by InsightFace on first use if not cached. Model files are ignored by Git.
+---
 
-## Free options at a glance
+## The interface
 
-| Option | AI key needed? | Cost model | Content controls | Best for |
-|---|---:|---|---|---|
-| Local / Colab InstructPix2Pix | No | Your hardware or free Colab quota | No extra Herogod cloud filter | Direct instruction edits |
-| Local / Colab SDXL img2img | No | Your hardware or free Colab quota | No extra Herogod cloud filter | Creative restyling |
-| Local FLUX 3 Image Klein | Yes, gated | Your hardware; 24GB+ BF16 GPU | FLUX Kommunity License | Full-caption edits, 16 steps |
-| Local FIBO 2 Edit Turbo | Yes, gated | Your high-memory hardware | CC BY-NC 4.0 | Non-commercial 4-step edits |
-| Local Qwen Image Edit 2511 | No | Your very-high-memory hardware | Apache 2.0 | High-fidelity edits, true CFG |
-| Local InsightFace face swap | No | Your hardware or free Colab quota | Consent required by app | Permitted face replacement |
-| HF Inference: InstructPix2Pix / FIBO 2 | Yes | Provider's current credits; limits vary | Provider/model rules apply | Supported hosted edits |
-| Gemini Flash Image | Yes | Current eligible free tier; limits vary | Google safety systems apply | Conversational hosted editing |
+```
+┌──────────────────────────────────────────────────────────────┬────────────────────┐
+│ canvas: Result · Compare · Input     seed / size / steps     │ instruction        │
+│                                                              │ styles (Fooocus)   │
+│   drop zone → input image → generated result                 │ reference images   │
+│   drag the compare handle for before/after                   │ steps · CFG · LoRA │
+│                                                              │ aspect · seed      │
+│ Save PNG · Use as input · Copy prompt · Full size · Stop     │ Generate           │
+├──────────────────────────────────────────────────────────────┴────────────────────┤
+│ Gallery drawer (server memory)          Engine drawer (runtime, VRAM, adapter)    │
+└───────────────────────────────────────────────────────────────────────────────────┘
+```
 
-**No option is unlimited.** Colab runtimes, hosted free quotas, eligible models, and provider availability can change. Herogod does not include shared keys, sell credits, or guarantee free access. See [GUIDE.md](GUIDE.md) for setup links, prompt tips, licensing notes, and troubleshooting.
+* **Compare** overlays the input under the result with a draggable seam (arrow keys work too).
+* **Use as input** chains edits without re-uploading; **Chain edits automatically** in Engine settings
+  does it on every result.
+* **Styles** append a fixed prompt fragment (hover a chip to read it exactly). Up to four, combined.
+* **Reference images** (max 3) go to the pipeline's multi-image input: subject, garment, style cue.
+* **Aspect** presets or "match input" pick an output canvas inside the pixel budget.
+* **Seed** `-1` is random; **Last** reuses the previous seed for a controlled variation.
+* Everything you change is remembered in `localStorage`; **Clear local settings** wipes it.
+* Keyboard: `Ctrl/⌘ + Enter` generates, `G` toggles the gallery, `Esc` closes drawers.
+
+---
 
 ## Configuration
 
-Set these environment variables on the **backend**. As an alternative for a trusted backend, the UI can keep your HF token in tab-only `sessionStorage` and send it through the `X-HF-Token` request header. Never embed credentials in source files.
+Copy `.env.example` and export what you need, or pass environment variables to the server/Colab cell.
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `HEROGOD_API_TOKEN` | empty | Protects all `/api` routes. Strongly recommended for any network/public server |
-| `HF_TOKEN` | empty | Enables hosted HF inference and gated downloads; UI token is an alternative |
-| `GEMINI_API_KEY` | empty | Enables Gemini inference |
-| `GEMINI_MODEL` | `gemini-2.5-flash-image` | Override the Gemini model when needed |
-| `HEROGOD_MODEL` | `timbrooks/instruct-pix2pix` | Default local model for new browser sessions (an explicit composer choice takes priority) |
-| `HEROGOD_MAX_IMAGE_SIZE` | model-dependent | Maximum local input dimension; clamped to 256–1536; unset/empty uses model default |
-| `HEROGOD_CPU_OFFLOAD` | model-dependent | Reduce CUDA memory for supported standard pipelines at the cost of speed/RAM |
-| `HEROGOD_FLUX_UPSAMPLING` | `0` | Explicitly enable the official FLUX 3 prompt upsampler; needs substantial extra memory |
-| `HEROGOD_FLUX_PUP_MODEL` | `black-forest-labs/flux-3-image-klein-pup` | Override the compatible prompt-upsampler repository |
-| `HEROGOD_MAX_CONCURRENCY` | `1` | Simultaneous inference jobs; keep low on free GPUs |
-| `HEROGOD_HF_PROVIDER` | `auto` | Hugging Face inference provider routing |
-| `HEROGOD_FACE_MODEL` | `models/inswapper_128.onnx` | Optional INSwapper weight path |
-| `PORT` / `HOST` | `8000` / `0.0.0.0` | Web server bind address |
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `HEROGOD_API_TOKEN` | *(empty)* | Shared secret checked on every API call. **Set it for any public URL.** Empty token in the query string works for `<img>` loads. |
+| `HEROGOD_BASE_MODEL` | `Qwen/Qwen-Image-Edit-2511` | Base repo id, or a local path. |
+| `HEROGOD_BASE_MODEL_PATH` | *(unset)* | Local snapshot directory (wins over the repo id). |
+| `HEROGOD_LORA_REPO` | `ScottzillaSystems/qwen-image-edit-plus-nsfw-lora` | LoRA repo, or a local directory. |
+| `HEROGOD_LORA_WEIGHT` | `qwen-image-edit-plus-nsfw-lora.safetensors` | Weight filename inside the repo. |
+| `HEROGOD_LORA_ADAPTER` | `mcnl-nsfw-v1` | Adapter name reported to diffusers. |
+| `HEROGOD_EXTRA_LORAS` | *(empty)* | `repo:weight:name,repo2:weight2:name2` — extra adapters in the dropdown. |
+| `HEROGOD_DTYPE` | `auto` | `auto` = bf16 on Ampere+, fp16 on T4/Turing, fp32 on CPU. |
+| `HEROGOD_QUANT` | `none` | `bnb4` enables bitsandbytes NF4 on transformer + text encoder. |
+| `HEROGOD_OFFLOAD` | `none` | `model` (whole modules) or `sequential` (layer by layer, slowest, smallest). |
+| `HEROGOD_VAE_TILING` | `1` | Tile the VAE decode to save VRAM at high resolutions. |
+| `HEROGOD_MAX_PIXELS` | `1048576` | Output pixel budget (1024×1024). Lower it first when you hit OOM. |
+| `HEROGOD_MAX_REFS` | `3` | Reference-image slots. |
+| `HEROGOD_STEPS` / `HEROGOD_TRUE_CFG` / `HEROGOD_LORA_SCALE` | `20` / `4.0` / `1.0` | UI defaults. |
+| `HEROGOD_MOCK` | `0` | Placeholder engine, no torch. |
+| `HEROGOD_MODELS_DIR` | `./models` | Where snapshots live. |
+| `HEROGOD_MAX_CONCURRENCY` | `1` | Parallel generations (keep at 1 on one GPU). |
+| `HF_TOKEN` | *(empty)* | Needed only for gated/private repos; also speeds up downloads. |
+| `HOST` / `PORT` / `LOG_LEVEL` | `0.0.0.0` / `8000` / `INFO` | Server binding. |
 
-Copy [.env.example](.env.example) as a reference. The app does not automatically load `.env`; export variables in your shell or use your process manager. Never commit real credentials.
+### Hardware reality check
+
+| GPU | Practical setting |
+| --- | --- |
+| RTX 4090 / A100 / L40S (24–40 GB+) | bf16, 1024², 20 steps — the intended experience |
+| L4 / A10 (24 GB) | bf16, 1024², 16–20 steps |
+| T4 (16 GB, Colab free) | fp16, `MAX_PIXELS=786432`, 12–20 steps, ~2–4 min/image |
+| 8–12 GB | `HEROGOD_QUANT=bnb4` + `HEROGOD_OFFLOAD=model`, 768² |
+| CPU only | works, but minutes to tens of minutes per image |
+
+Qwen-Image-Edit-2511 is a large MMDiT. There is no way to make it small; start by shrinking the pixel
+budget, then quantise, then offload.
+
+---
+
+## CLI
+
+```bash
+python scripts/download_models.py --help
+  --dest models              destination (default $HEROGOD_MODELS_DIR)
+  --base  Qwen/…             base repo id
+  --lora  Scottzilla…        LoRA repo id
+  --skip-base / --skip-lora  partial download
+  --min-free-gb 45           refuse to start when the disk is too small
+
+python server.py  [--host H] [--port P] [--mock] [--no-token] [--preload]
+```
 
 ## API
 
-Interactive OpenAPI documentation is available at `/api/docs` when the server is running.
+All endpoints under `/api` require `X-Herogod-Token` (or `Authorization: Bearer …`, or `?token=…`
+on GETs) when `HEROGOD_API_TOKEN` is set. `GET /api/health` is always public.
 
-- `GET /api/health` — provider and feature readiness; never returns credentials
-- `POST /api/edit` — multipart image + prompt + provider/model/settings; returns a PNG data URL
-- `POST /api/face-swap` — multipart target + reference + `consent=true`; returns a PNG data URL
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/health` | Liveness, version, whether a token is required, mock flag |
+| `GET` | `/api/config` | Styles, performance presets, aspects, LoRA info, limits, defaults |
+| `GET` | `/api/engine` | Runtime state: device, dtype, quant, offload, adapters, load time |
+| `POST` | `/api/engine/load` | Load the pipeline now |
+| `POST` | `/api/engine/unload` | Drop the pipeline and empty the CUDA cache |
+| `POST` | `/api/jobs` | Multipart: `image`, `refs[]`, `prompt`, `negative`, `styles` (JSON), `steps`, `true_cfg`, `lora_scale`, `adapter`, `seed`, `aspect` → `202 {id}` |
+| `GET` | `/api/jobs` | Job list (newest first) |
+| `GET` | `/api/jobs/{id}` | Status, progress, step counter, seed, settings, error |
+| `POST` | `/api/jobs/{id}/cancel` | Cooperative cancel between steps |
+| `GET` | `/api/jobs/{id}/image` · `/thumb` | PNG output, full and 512 px thumbnail |
+| `DELETE` | `/api/jobs` | Clear finished jobs from memory |
 
-If `HEROGOD_API_TOKEN` is configured, send either:
+Images are returned as PNG bytes (not base64) so the browser can cache them normally.
+Interactive docs: `/api/docs`.
 
-```text
-Authorization: Bearer YOUR_HEROGOD_TOKEN
+```bash
+curl -s -X POST http://localhost:8000/api/jobs \
+  -H "X-Herogod-Token: $HEROGOD_API_TOKEN" \
+  -F image=@photo.jpg \
+  -F prompt="swap the background for a rainy neon street, keep the face" \
+  -F styles='["cinematic"]' \
+  -F steps=20 -F true_cfg=4 -F seed=-1
 ```
 
-or `X-Herogod-Token: YOUR_HEROGOD_TOKEN`. This token is different from an AI provider key.
+---
 
-For hosted HF inference or gated local downloads, the UI can also send `X-HF-Token: YOUR_HF_TOKEN`. It overrides `HF_TOKEN` only for that request, is never returned by health responses, and is not written into server environment variables. Use HTTPS and only send it to a backend you trust. CORS permits the standalone HTML file to connect to your chosen backend.
-
-## Project structure
-
-```text
-index.html                 Standalone interface and in-app guide
-styles.css                Responsive dark studio design
-app.js                    Chat, uploads, IndexedDB, providers, API client
-server.py                 FastAPI server, validation, authentication, static hosting
-backend/providers.py      Lazy Diffusers / Hugging Face / Gemini adapters
-backend/face_swap.py      Optional local InsightFace engine
-scripts/setup_face_swap.py Verified face-weight downloader
-Herogod_Colab.ipynb       Colab installer, server, and Cloudflare tunnel
-GUIDE.md                  Detailed free setup and usage guide
-tests/                    API and validation tests (no GPU required)
-```
-
-## Privacy and security notes
-
-- Images are decoded, processed in memory, re-encoded, and returned. Herogod does not save request images or prompts to a database. Large multipart uploads can use short-lived Starlette/OS temporary files, which are closed promptly after reading.
-- The browser stores conversations and image data locally in IndexedDB. Delete a creation to remove it from that browser; download anything you want to keep.
-- Gemini keys remain in backend environment variables/Colab Secrets. The Herogod tunnel token and optional UI-supplied HF token are stored in `sessionStorage`, not persistent local storage. The HF token is forwarded only to your configured backend; use Colab Secrets instead on shared runtimes.
-- Uploaded files are limited to 15 MB each and 40 MP; only valid PNG, JPEG, and WebP images are accepted. EXIF orientation is applied and metadata is not carried into output.
-- A public tunnel is still public. Always use a long random `HEROGOD_API_TOKEN`, keep provider keys in Colab Secrets, and stop the tunnel when finished.
-- Cloudflare and any selected hosted AI provider have their own logging/data policies. “Self-hosted” refers to the Herogod pipeline, not the tunnel infrastructure.
-
-## Development checks
-
-The API/provider tests mock inference, so they need neither a GPU nor provider keys:
+## Development
 
 ```bash
 pip install -r requirements-dev.txt
-pytest -q
-node --check app.js
+pytest -q                        # API, prompt and engine tests; mock engine, no GPU
+node tests/frontend_smoke.cjs    # CSP, asset, id and CSS sanity checks
+
+# optional: real DOM tests in jsdom (starts its own mock server)
+cd tests/ui && npm install && npm test
+
+python server.py --mock          # iterate on the UI with instant placeholder renders
 ```
 
-The optional DOM smoke test uses jsdom for development only—the frontend itself still needs no npm/build step:
+The frontend is plain HTML/CSS/JS in `web/` — no bundler, no npm packages, no CDN. The server
+streams those files as static routes and sets a strict CSP (`script-src 'self'`, no inline handlers).
 
-```bash
-npm install --prefix /tmp/herogod-jsdom jsdom@26
-NODE_PATH=/tmp/herogod-jsdom/node_modules node tests/frontend_smoke.cjs
+```
+Herogod/
+├── server.py              FastAPI app, auth, upload validation, static routes
+├── app/
+│   ├── config.py          settings, style/preset catalogs
+│   ├── prompts.py         style composition, size math, seed parsing
+│   ├── engine.py          Qwen pipeline + LoRA adapters + mock engine
+│   └── jobs.py            in-memory job store with progress + cancel
+├── web/                   index.html · styles.css · app.js
+├── scripts/download_models.py
+├── tests/                 pytest suite + node smoke test
+├── Herogod_Colab.ipynb    guided Colab runtime
+└── requirements*.txt
 ```
 
-## Responsible creation
+### How a request flows
 
-Only upload media you may modify. Get clear permission before swapping a recognizable person's face, label synthetic edits when context could mislead, and never create exploitative or non-consensual imagery. Model pricing does not determine model licensing—review every model card before commercial use.
+1. `POST /api/jobs` validates uploads (type, size, pixel count, EXIF orientation), resolves styles,
+   clamps steps/CFG/LoRA scale and computes the output canvas.
+2. `jobs.start_job` runs generation on a worker thread so the event loop stays responsive.
+3. `QwenEngine` lazily loads `QwenImageEditPlusPipeline`, then loads/switches the LoRA adapter
+   (`load_lora_weights` once, `set_adapters` per request) and calls it with `true_cfg_scale`,
+   a seeded generator and a step callback feeding job progress.
+4. The browser polls `GET /api/jobs/{id}` and swaps in `/api/jobs/{id}/image` when it is done.
+
+---
+
+## Troubleshooting
+
+| Symptom | Cause / fix |
+| --- | --- |
+| `Cannot reach the backend` | The page can't reach the API: server down, wrong **Backend URL**, or a tunnel expired. |
+| `401` / token rejected | Token mismatch: copy it from the Colab cell into **Engine → Connection**. |
+| `Model failed to load` | Disk or network: base model needs ~40 GB free. Check the log (`/tmp/herogod-server.log` on Colab). |
+| `CUDA out of memory` | Lower `HEROGOD_MAX_PIXELS`, set `HEROGOD_OFFLOAD=model`, or `HEROGOD_QUANT=bnb4`; restart the runtime to clear fragmentation. |
+| Black/NaN output on a T4 | Force `HEROGOD_DTYPE=fp16` (T4 has no bf16). |
+| Slow first run | Expected: weights download once, then load into VRAM. Use `--preload` to pay it up front. |
+| `diffusers` has no `QwenImageEditPlusPipeline` | Upgrade: `pip install -U "diffusers>=0.36"`. |
+| Colab tunnel URL changes | Quick tunnels are per-run; re-run the tunnel cell and update the token in the studio. |
+
+## Privacy, safety, legal
+
+* No analytics, no telemetry, no prompt log, no server-side image history on disk. Jobs live in RAM and
+  disappear when the process stops. Only **Save PNG** writes a file, and only to your downloads folder.
+* A Cloudflare quick tunnel publishes your runtime on a public URL. Keep `HEROGOD_API_TOKEN` set; the
+  tunnel is the only thing between the internet and your GPU.
+* Herogod does not add a moderation layer, and equally does not help you evade one on other platforms.
+* Adults only. No sexual content involving minors, no non-consensual intimate imagery, no impersonation,
+  no fraud or harassment. Respect the OpenRAIL++ use restrictions of the LoRA and the law where you live.
+* Face and identity edits of real people require their consent.
+
+## Credits
+
+* [Qwen-Image-Edit-2511](https://huggingface.co/Qwen/Qwen-Image-Edit-2511) — Alibaba Qwen team (Apache-2.0).
+* [MCNL v1 NSFW LoRA](https://huggingface.co/ScottzillaSystems/qwen-image-edit-plus-nsfw-lora) —
+  ScottzillaSystems (OpenRAIL++), a mirror of `aiunivers/qwen-image-edit-plus-nsfw-lora`.
+* [Diffusers](https://github.com/huggingface/diffusers) for the pipeline, [FastAPI](https://fastapi.tiangolo.com/)
+  for the server.
+* Style presets are inspired by Fooocus' style chips; the fragments here are original text.

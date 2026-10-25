@@ -12,6 +12,10 @@ __pycache__/
 .venv/
 venv/
 
+# Node (optional UI test harness)
+node_modules/
+package-lock.json
+
 # Downloaded weights and generated media
 models/
 outputs/

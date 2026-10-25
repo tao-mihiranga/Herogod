@@ -1,0 +1,14 @@
+{
+  "name": "herogod-ui-tests",
+  "private": true,
+  "version": "2.0.0",
+  "description": "Browser-level smoke tests for the Herogod studio, driven by jsdom against a mock backend.",
+  "scripts": {
+    "test": "node run.cjs",
+    "boot": "node boot.js",
+    "flow": "node flow.js"
+  },
+  "devDependencies": {
+    "jsdom": "^25.0.0"
+  }
+}

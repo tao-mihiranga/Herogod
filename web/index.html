@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="color-scheme" content="dark" />
+<title>Herogod — Qwen Image Edit Studio</title>
+<meta name="description" content="Herogod is a self-hosted image editing studio built on Qwen Image Edit 2511 with the MCNL LoRA. Run it on Google Colab or your own GPU." />
+<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+<link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+<a class="skip-link" href="#prompt">Skip to the editor</a>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-mark" aria-hidden="true">
+      <svg viewBox="0 0 32 32" role="img" focusable="false">
+        <path d="M6 26V6h5v7h10V6h5v20h-5v-8H11v8z" />
+        <circle cx="26" cy="8" r="4" class="spark" />
+      </svg>
+    </div>
+    <div class="brand-text">
+      <strong>Herogod</strong>
+      <span>Qwen Image Edit Studio</span>
+    </div>
+  </div>
+
+  <div class="engine-chip" id="engine-chip" title="Engine status">
+    <span class="dot" id="engine-dot" data-state="unknown"></span>
+    <span class="engine-label" id="engine-label">Connecting…</span>
+    <span class="engine-device" id="engine-device"></span>
+  </div>
+
+  <div class="topbar-actions">
+    <span class="badge" id="mock-badge" hidden>MOCK</span>
+    <button class="btn ghost icon-text" id="btn-settings" type="button">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.5A3.5 3.5 0 1 0 12 8.5a3.5 3.5 0 0 0 0 7Z"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06A2 2 0 1 1 3.2 16.9l.06-.06A1.7 1.7 0 0 0 3.6 15a1.7 1.7 0 0 0-1.55-1H2a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 3.65 8.9a1.7 1.7 0 0 0-.34-1.87l-.06-.06A2 2 0 1 1 6.08 4.2l.06.06a1.7 1.7 0 0 0 1.87.34H8a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87V9a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/></svg>
+      Engine
+    </button>
+    <button class="btn ghost icon-text" id="btn-gallery" type="button" aria-expanded="false" aria-controls="gallery">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+      Gallery
+      <span class="pill-count" id="gallery-count">0</span>
+    </button>
+    <button class="btn ghost icon-only" id="btn-help" type="button" aria-label="Help and safety">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.2a2.5 2.5 0 1 1 3.4 2.33c-.63.25-1 .86-1 1.55v.42"/><path d="M12 17h.01"/></svg>
+    </button>
+  </div>
+</header>
+
+<main class="layout">
+  <!-- ---------------------------------------------------------------- -->
+  <!-- Canvas                                                           -->
+  <!-- ---------------------------------------------------------------- -->
+  <section class="stage" id="stage" aria-label="Image canvas">
+    <div class="stage-toolbar">
+      <div class="segmented" role="group" aria-label="View mode">
+        <button type="button" class="seg is-active" data-view="result">Result</button>
+        <button type="button" class="seg" data-view="compare">Compare</button>
+        <button type="button" class="seg" data-view="input">Input</button>
+      </div>
+      <div class="stage-tools">
+        <div class="stage-meta" id="stage-meta"></div>
+        <button class="btn ghost sm" id="btn-replace" type="button" hidden>Replace image</button>
+      </div>
+    </div>
+
+    <div class="canvas" id="canvas" data-view="result">
+      <!-- Empty state / drop zone -->
+      <div class="dropzone" id="dropzone">
+        <div class="dropzone-inner">
+          <div class="drop-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
+          </div>
+          <h2>Drop an image to start</h2>
+          <p>Drag &amp; drop, paste from the clipboard, or pick a file. PNG, JPG or WebP up to 15&nbsp;MB.</p>
+          <div class="dropzone-actions">
+            <button class="btn primary" id="btn-pick" type="button">Choose image</button>
+            <button class="btn ghost" id="btn-sample" type="button">Use a sample</button>
+          </div>
+          <p class="tiny">Everything stays on the machine running this studio.</p>
+        </div>
+      </div>
+
+      <!-- Image layers -->
+      <div class="layers" id="layers" hidden>
+        <div class="layer" data-layer="result">
+          <img id="img-result" alt="Edited result" decoding="async" />
+          <div class="result-veil" id="result-veil">
+            <div class="spinner"></div>
+            <div class="veil-text" id="veil-text">Generating…</div>
+            <div class="veil-bar"><span id="veil-bar-fill"></span></div>
+          </div>
+        </div>
+        <div class="layer" data-layer="input">
+          <img id="img-input" alt="Input image" decoding="async" />
+        </div>
+        <div class="compare" id="compare" hidden>
+          <div class="compare-clip" id="compare-clip">
+            <img id="img-before" alt="Before" decoding="async" />
+          </div>
+          <div class="compare-handle" id="compare-handle" role="slider" tabindex="0" aria-label="Comparison position" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50">
+            <span></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="stage-loading" id="stage-loading" hidden>
+        <div class="spinner"></div>
+        <p>Loading preview…</p>
+      </div>
+    </div>
+
+    <div class="stage-footer">
+      <div class="result-actions" id="result-actions">
+        <button class="btn ghost sm" id="btn-save" type="button" disabled>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 19h14"/></svg>
+          Save PNG
+        </button>
+        <button class="btn ghost sm" id="btn-reuse" type="button" disabled>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 0 1 13.66-5.66L20 8"/><path d="M20 4v4h-4"/><path d="M20 12a8 8 0 0 1-13.66 5.66L4 16"/><path d="M4 20v-4h4"/></svg>
+          Use as input
+        </button>
+        <button class="btn ghost sm" id="btn-copy-prompt" type="button" disabled>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M15 5.5A1.5 1.5 0 0 0 13.5 4H5.5A1.5 1.5 0 0 0 4 5.5v8A1.5 1.5 0 0 0 5.5 15"/></svg>
+          Copy prompt
+        </button>
+        <button class="btn ghost sm" id="btn-fullscreen" type="button" disabled>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5"/><path d="M20 15v5h-5"/><path d="M15 4h5v5"/><path d="M9 20H4v-5"/></svg>
+          Full size
+        </button>
+        <button class="btn ghost sm danger" id="btn-cancel" type="button" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+          Stop
+        </button>
+      </div>
+      <div class="seed-readout" id="seed-readout"></div>
+    </div>
+  </section>
+
+  <!-- ---------------------------------------------------------------- -->
+  <!-- Controls                                                         -->
+  <!-- ---------------------------------------------------------------- -->
+  <aside class="panel" aria-label="Edit controls">
+    <form id="edit-form" autocomplete="off">
+      <div class="panel-block">
+        <div class="panel-head">
+          <label class="panel-title" for="prompt">Instruction</label>
+          <span class="counter" id="prompt-count">0 / 2000</span>
+        </div>
+        <div class="prompt-wrap">
+          <textarea id="prompt" name="prompt" rows="5" maxlength="2000"
+            placeholder="Describe the change, e.g. “replace the background with a rainy neon street at night, keep the face and pose”"></textarea>
+          <div class="prompt-tools">
+            <button type="button" class="chip-mini" id="btn-negative-toggle" aria-pressed="false">Negative</button>
+            <button type="button" class="chip-mini" id="btn-clear-prompt">Clear</button>
+            <span class="hint" id="prompt-hint"></span>
+          </div>
+          <div class="negative-wrap" id="negative-wrap" hidden>
+            <label class="sr-only" for="negative">Negative prompt</label>
+            <textarea id="negative" name="negative" rows="2" maxlength="600" placeholder="Negative prompt (what to avoid)"></textarea>
+          </div>
+        </div>
+        <div class="prompt-history" id="prompt-history" hidden>
+          <span class="history-label">Recent</span>
+          <div class="history-chips" id="history-chips"></div>
+        </div>
+      </div>
+
+      <div class="panel-block">
+        <div class="panel-head">
+          <span class="panel-title">Style</span>
+          <span class="panel-note">up to 4 · applied as prompt fragments</span>
+        </div>
+        <div class="chips" id="style-chips" role="group" aria-label="Styles"></div>
+      </div>
+
+      <div class="panel-block">
+        <div class="panel-head">
+          <span class="panel-title">Reference images</span>
+          <span class="panel-note" id="refs-note">optional · subject / style cues</span>
+        </div>
+        <div class="refs" id="refs">
+          <button type="button" class="ref-add" id="ref-add">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+            <span>Add</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="panel-block">
+        <div class="panel-head">
+          <span class="panel-title">Settings</span>
+          <button type="button" class="link-btn" id="btn-reset-settings">Reset</button>
+        </div>
+
+        <div class="perf" id="perf-presets" role="group" aria-label="Performance preset">
+          <button type="button" class="perf-btn" data-perf="turbo">Turbo<small>8 steps</small></button>
+          <button type="button" class="perf-btn is-active" data-perf="balanced">Balanced<small>20 steps</small></button>
+          <button type="button" class="perf-btn" data-perf="quality">Quality<small>32 steps</small></button>
+        </div>
+
+        <div class="field">
+          <div class="field-label"><label for="steps">Steps</label><output id="steps-out">20</output></div>
+          <input type="range" id="steps" name="steps" min="1" max="60" step="1" value="20" />
+        </div>
+
+        <div class="field">
+          <div class="field-label"><label for="true-cfg">True CFG</label><output id="true-cfg-out">4.0</output></div>
+          <input type="range" id="true-cfg" name="true_cfg" min="0" max="10" step="0.1" value="4" />
+          <p class="field-hint">Higher follows the instruction harder; 3–5 is the sweet spot.</p>
+        </div>
+
+        <div class="field">
+          <div class="field-label"><label for="lora-scale">LoRA strength</label><output id="lora-scale-out">1.00</output></div>
+          <input type="range" id="lora-scale" name="lora_scale" min="0" max="2" step="0.05" value="1" />
+          <p class="field-hint" id="lora-hint">Adapter: MCNL NSFW v1</p>
+        </div>
+
+        <div class="field">
+          <div class="field-label"><span>Output size</span><output id="size-out">Match input</output></div>
+          <div class="aspect-grid" id="aspect-grid" role="group" aria-label="Aspect ratio"></div>
+        </div>
+
+        <div class="field seed-field">
+          <div class="field-label"><label for="seed">Seed</label><output id="seed-out">random</output></div>
+          <div class="seed-row">
+            <input type="number" id="seed" name="seed" value="-1" min="-1" max="2147483647" step="1" inputmode="numeric" />
+            <button type="button" class="btn ghost sm" id="btn-seed-random" title="Use a random seed">Random</button>
+            <button type="button" class="btn ghost sm" id="btn-seed-last" title="Reuse the last used seed">Last</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel-submit">
+        <button class="btn primary generate" id="btn-generate" type="submit">
+          <span class="gen-label">Generate</span>
+          <span class="gen-progress" id="gen-progress"></span>
+          <svg class="gen-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg>
+        </button>
+        <p class="tiny" id="submit-hint">Add an image and describe the edit.</p>
+      </div>
+    </form>
+  </aside>
+</main>
+
+<!-- ------------------------------------------------------------------ -->
+<!-- Gallery drawer                                                      -->
+<!-- ------------------------------------------------------------------ -->
+<section class="drawer" id="gallery" aria-label="Gallery" hidden>
+  <div class="drawer-head">
+    <h2>Gallery</h2>
+    <div class="drawer-actions">
+      <button class="btn ghost sm" id="btn-gallery-clear" type="button">Clear finished</button>
+      <button class="btn ghost icon-only" id="btn-gallery-close" type="button" aria-label="Close gallery">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+    </div>
+  </div>
+  <div class="gallery-grid" id="gallery-grid"></div>
+  <p class="gallery-empty" id="gallery-empty">Finished edits appear here. Nothing is stored on disk — resetting the runtime clears it.</p>
+</section>
+
+<!-- ------------------------------------------------------------------ -->
+<!-- Settings drawer                                                     -->
+<!-- ------------------------------------------------------------------ -->
+<section class="drawer" id="settings" aria-label="Engine settings" hidden>
+  <div class="drawer-head">
+    <h2>Engine</h2>
+    <button class="btn ghost icon-only" id="btn-settings-close" type="button" aria-label="Close settings">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+    </button>
+  </div>
+  <div class="settings-grid">
+    <div class="card">
+      <h3>Connection</h3>
+      <label class="lbl" for="api-base">Backend URL</label>
+      <input id="api-base" type="url" placeholder="Leave empty when served by the backend" />
+      <label class="lbl" for="api-token">Access token</label>
+      <input id="api-token" type="password" placeholder="HEROGOD_API_TOKEN" />
+      <p class="field-hint">Leave the URL empty when you opened this page from the studio server. The token is remembered in this browser only.</p>
+      <button class="btn primary sm" id="btn-connect" type="button">Reconnect</button>
+    </div>
+
+    <div class="card">
+      <h3>Runtime</h3>
+      <dl class="kv" id="engine-kv"></dl>
+      <div class="card-actions">
+        <button class="btn ghost sm" id="btn-engine-load" type="button">Load model now</button>
+        <button class="btn ghost sm" id="btn-engine-unload" type="button">Unload (free VRAM)</button>
+      </div>
+      <p class="field-hint">The first generation downloads Qwen-Image-Edit-2511 (~40&nbsp;GB) plus the LoRA (590&nbsp;MB) into the runtime. Watch the Colab cell log for progress.</p>
+    </div>
+
+    <div class="card">
+      <h3>Adapter</h3>
+      <label class="lbl" for="adapter">LoRA adapter</label>
+      <select id="adapter"></select>
+      <p class="field-hint" id="adapter-hint"></p>
+    </div>
+
+    <div class="card">
+      <h3>This browser</h3>
+      <label class="switch"><input type="checkbox" id="opt-auto-reuse" /><span></span>Chain edits automatically (feed each result back in)</label>
+      <label class="switch"><input type="checkbox" id="opt-auto-scroll" checked /><span></span>Scroll to the result when done</label>
+      <button class="btn ghost sm" id="btn-forget" type="button">Clear local settings</button>
+    </div>
+
+    <div class="card warn">
+      <h3>Adults only</h3>
+      <p id="safety-copy">
+        This studio runs an open-weights model with an adult-content LoRA. Use it only if you are 18 or older and it is
+        legal where you are. Never generate sexual content involving minors or people who have not consented, and never
+        use it to harass or deceive. You are responsible for what you make and where you publish it.
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ------------------------------------------------------------------ -->
+<!-- Help dialog                                                        -->
+<!-- ------------------------------------------------------------------ -->
+<dialog class="modal" id="help-dialog">
+  <form method="dialog" class="modal-inner">
+    <header class="modal-head">
+      <h2>How to use Herogod</h2>
+      <button class="btn ghost icon-only" value="close" aria-label="Close help">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+    </header>
+    <div class="modal-body">
+      <ol class="steps-list">
+        <li><strong>Add a base image.</strong> Drop a file, paste, or pick one. The base image defines the scene and composition.</li>
+        <li><strong>Write the instruction.</strong> Say what should change and what should stay: “swap the jacket for a leather one, keep the face”.</li>
+        <li><strong>Add references (optional).</strong> Up to three extra images guide a subject, garment, or look.</li>
+        <li><strong>Pick a style.</strong> Styles append a fixed prompt fragment, exactly as shown in the chips' tooltips.</li>
+        <li><strong>Generate.</strong> Press <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd>. Press <em>Stop</em> to cancel.</li>
+        <li><strong>Iterate.</strong> <em>Use as input</em> feeds the result back in; the seed is kept for small variations.</li>
+      </ol>
+      <h3>Hardware reality check</h3>
+      <p>Qwen-Image-Edit-2511 is a large model. A 16&nbsp;GB GPU with bf16 works at reduced resolution; a T4 (16&nbsp;GB) needs fp16 and patience; 4-bit quantisation lowers VRAM further. CPU-only runs are possible but very slow.</p>
+      <h3>Privacy</h3>
+      <p>There is no cloud moderation layer, no prompt log and no server-side image history. Images live in RAM until the runtime stops and are only downloaded when you press <em>Save PNG</em>. A temporary Colab tunnel URL is public, so keep the access token on.</p>
+      <h3>Legal</h3>
+      <p>Respect the model licences (Qwen-Image-Edit-2511: Apache-2.0, MCNL LoRA: OpenRAIL++), the platform you run on, and the law where you live. No non-consensual intimate imagery, no sexual content involving minors, no impersonation or fraud.</p>
+    </div>
+    <footer class="modal-foot">
+      <button class="btn primary" value="close">Got it</button>
+    </footer>
+  </form>
+</dialog>
+
+<dialog class="modal lightbox" id="lightbox">
+  <form method="dialog">
+    <img id="lightbox-img" alt="Generated image at full size" />
+    <button class="btn ghost icon-only lightbox-close" value="close" aria-label="Close preview">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+    </button>
+  </form>
+</dialog>
+
+<div class="toasts" id="toasts" aria-live="polite" aria-atomic="false"></div>
+
+<input type="file" id="file-input" accept="image/png,image/jpeg,image/webp" hidden />
+<input type="file" id="ref-input" accept="image/png,image/jpeg,image/webp" multiple hidden />
+
+<script src="/app.js" defer></script>
+</body>
+</html>
