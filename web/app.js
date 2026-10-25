@@ -583,6 +583,7 @@
       ["Adapter", engine.active_adapter || "—"],
       ["LoRA scale", engine.lora_scale !== null && engine.lora_scale !== undefined ? Number(engine.lora_scale).toFixed(2) : "—"],
       ["GPU", engine.gpu || "CPU only"],
+      ["HF token", engine.hf_token ? "configured" : "not set"],
       ["Precision", engine.dtype],
       ["Quantisation", engine.quant],
       ["Offload", engine.offload],

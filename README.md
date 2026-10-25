@@ -26,14 +26,20 @@ studio passes your instruction through unchanged, so include them yourself if yo
 
 ## Quick start on Google Colab
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/tao-mihiranga/Herogod/blob/main/Herogod_Colab.ipynb)
+Two notebooks, same model (`Qwen-Image-Edit-2511` + the MCNL LoRA). Pick one:
 
-1. Open [`Herogod_Colab.ipynb`](Herogod_Colab.ipynb) and pick **Runtime → Change runtime type → GPU**
-   (L4/A100 preferred; T4 works at a lower pixel budget).
-2. Run the cells in order. Cell 2 is a form: dtype, quantisation, offload, pixel budget, steps.
-3. Cell 4 **downloads the weights into Colab** (`/content/models`): ~40 GB base + 590 MB LoRA.
+| Notebook | Use it when |
+| --- | --- |
+| [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/tao-mihiranga/Herogod/blob/main/Herogod_Colab.ipynb) [`Herogod_Colab.ipynb`](Herogod_Colab.ipynb) | Anonymous downloads are fine and the repo gates are already accepted. |
+| [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/tao-mihiranga/Herogod/blob/main/Herogod_Colab_HF_Token.ipynb) [`Herogod_Colab_HF_Token.ipynb`](Herogod_Colab_HF_Token.ipynb) | **Recommended.** Uses your own Hugging Face token: unlocks the gated LoRA, higher rate limits, `hf_transfer` speedups, and verifies access *before* the 40 GB download. |
+
+### Common flow
+
+1. Pick **Runtime → Change runtime type → GPU** (L4/A100 preferred; T4 works at a lower pixel budget).
+2. Run the cells in order. The configuration form sets dtype, quantisation, offload, pixel budget and steps.
+3. The download cell fetches the weights into `/content/models` (~40 GB base + 590 MB LoRA).
    Skip it and the model downloads lazily on the first edit instead.
-4. Cell 5 starts the server, cell 6 opens a Cloudflare quick tunnel and prints:
+4. The launcher starts the server, opens a Cloudflare quick tunnel and prints:
    ```
    Studio:         https://something.trycloudflare.com
    One-click link: https://something.trycloudflare.com/?token=…
@@ -42,10 +48,26 @@ studio passes your instruction through unchanged, so include them yourself if yo
 5. Open the one-click link (or paste the token into **Engine → Connection**).
 6. Add an image, type an instruction, press **Generate**.
 
-Set `PUBLIC_TUNNEL = False` in cell 2 to use Colab's private proxy instead of a public URL.
+Set `PUBLIC_TUNNEL = False` to use Colab's private proxy instead of a public URL.
 
 The first generation after loading a 40 GB model takes several minutes on a T4. Keep the runtime alive;
 closing it kills the tunnel and the model.
+
+### About the Hugging Face token notebook
+
+The token is read from Colab Secrets (`HF_TOKEN`), a hidden prompt, or the environment. It is:
+
+* validated with `whoami` and a repo access check (`scripts/download_models.py --check-access`) **before**
+  any large download, with actionable messages for 401 / 403 / gate-not-accepted / rate-limit cases;
+* used for the base model *and* the LoRA (the LoRA repo carries a Not-For-All-Audiences gate);
+* never printed, written to disk or exposed to the studio frontend — only a short fingerprint is shown so
+  you can tell which token is loaded. The studio access token is a separate, run-specific value.
+
+Optional: enable `ENABLE_HF_TRANSFER` in the first cell to install `hf_transfer` (faster parallel downloads),
+and use the final smoke-test cell to prove the token, gates, pipeline and LoRA all work end to end.
+
+> The token is only needed to *download* weights. Inference is fully local — nothing about an edit leaves
+> your runtime.
 
 ---
 
@@ -162,8 +184,13 @@ python scripts/download_models.py --help
   --dest models              destination (default $HEROGOD_MODELS_DIR)
   --base  Qwen/…             base repo id
   --lora  Scottzilla…        LoRA repo id
+  --token hf_…               or set HF_TOKEN (never printed)
+  --check-access             verify token + repo access, download nothing
   --skip-base / --skip-lora  partial download
   --min-free-gb 45           refuse to start when the disk is too small
+
+python scripts/download_models.py --check-access            # gated/private access check
+HF_TOKEN=hf_… python scripts/download_models.py --dest models
 
 python server.py  [--host H] [--port P] [--mock] [--no-token] [--preload]
 ```
@@ -205,7 +232,7 @@ curl -s -X POST http://localhost:8000/api/jobs \
 
 ```bash
 pip install -r requirements-dev.txt
-pytest -q                        # API, prompt and engine tests; mock engine, no GPU
+pytest -q                        # API, prompt, engine, downloader and notebook tests; mock engine, no GPU
 node tests/frontend_smoke.cjs    # CSP, asset, id and CSS sanity checks
 
 # optional: real DOM tests in jsdom (starts its own mock server)
@@ -226,9 +253,10 @@ Herogod/
 │   ├── engine.py          Qwen pipeline + LoRA adapters + mock engine
 │   └── jobs.py            in-memory job store with progress + cancel
 ├── web/                   index.html · styles.css · app.js
-├── scripts/download_models.py
-├── tests/                 pytest suite + node smoke test
-├── Herogod_Colab.ipynb    guided Colab runtime
+├── scripts/download_models.py   token-aware downloader + access checker
+├── tests/                 pytest suites + node/jsdom frontend tests
+├── Herogod_Colab.ipynb          anonymous Colab runtime
+├── Herogod_Colab_HF_Token.ipynb Colab runtime with your HF token (gates, rate limits)
 └── requirements*.txt
 ```
 
@@ -256,6 +284,8 @@ Herogod/
 | Slow first run | Expected: weights download once, then load into VRAM. Use `--preload` to pay it up front. |
 | `diffusers` has no `QwenImageEditPlusPipeline` | Upgrade: `pip install -U "diffusers>=0.36"`. |
 | Colab tunnel URL changes | Quick tunnels are per-run; re-run the tunnel cell and update the token in the studio. |
+| `Access to model … is restricted` | Gated repo: accept its conditions on Hugging Face with the token's account, then use the [token notebook](Herogod_Colab_HF_Token.ipynb) (`--check-access` tells you which repo failed). |
+| HF downloads rate-limited | Authenticate with `HF_TOKEN` and set `HF_HUB_ENABLE_HF_TRANSFER=1` (needs `pip install hf_transfer`). |
 
 ## Privacy, safety, legal
 

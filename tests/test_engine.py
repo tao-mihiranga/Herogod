@@ -52,3 +52,4 @@ def test_qwen_engine_status_without_torch():
     assert status["adapters"]
     assert status["adapters"][0]["name"]
     assert isinstance(status["torch_installed"], bool)
+    assert status["hf_token"] in (True, False)  # a flag, never the token itself
